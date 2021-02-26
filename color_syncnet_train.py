@@ -47,7 +47,7 @@ class Dataset(object):
 
         window_fnames = []
         for frame_id in range(start_id, start_id + syncnet_T):
-            frame = join(vidname, '{}.jpg'.format(frame_id))
+            frame = join(vidname, '{}.png'.format(frame_id))
             if not isfile(frame):
                 return None
             window_fnames.append(frame)
@@ -71,7 +71,7 @@ class Dataset(object):
             idx = random.randint(0, len(self.all_videos) - 1)
             vidname = self.all_videos[idx]
 
-            img_names = list(glob(join(vidname, '*.jpg')))
+            img_names = list(glob(join(vidname, '*.png')))
             if len(img_names) <= 3 * syncnet_T:
                 continue
             img_name = random.choice(img_names)

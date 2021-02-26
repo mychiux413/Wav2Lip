@@ -52,7 +52,7 @@ class Dataset(object):
 
         window_fnames = []
         for frame_id in range(start_id, start_id + syncnet_T):
-            frame = join(vidname, '{}.jpg'.format(frame_id))
+            frame = join(vidname, '{}.png'.format(frame_id))
             if not isfile(frame):
                 return None
             window_fnames.append(frame)
@@ -114,7 +114,7 @@ class Dataset(object):
         while 1:
             idx = random.randint(0, len(self.all_videos) - 1)
             vidname = self.all_videos[idx]
-            img_names = list(glob(join(vidname, '*.jpg')))
+            img_names = list(glob(join(vidname, '*.png')))
             if len(img_names) <= 3 * syncnet_T:
                 continue
             
@@ -176,7 +176,7 @@ def save_sample_images(x, g, gt, global_step, checkpoint_dir):
     collage = np.concatenate((refs, inps, g, gt), axis=-2)
     for batch_idx, c in enumerate(collage):
         for t in range(len(c)):
-            cv2.imwrite('{}/{}_{}.jpg'.format(folder, batch_idx, t), c[t])
+            cv2.imwrite('{}/{}_{}.png'.format(folder, batch_idx, t), c[t])
 
 logloss = nn.BCELoss()
 def cosine_loss(a, v, y):
