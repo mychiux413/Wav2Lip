@@ -75,7 +75,7 @@ class Dataset(object):
 
 
     def __len__(self):
-        return len(self.all_videos)
+        return sum([len(self.img_names[vid]) for vid in self.all_videos])
 
     def __getitem__(self, idx):
         while 1:
@@ -89,7 +89,7 @@ class Dataset(object):
             wrong_image_names = self.img_names[random.choice(list(self.img_names.keys()))]
             wrong_img_name = random.choice(wrong_image_names)
             while wrong_img_name == img_name:
-                wrong_img_name = random.choice(wrong_img_name)
+                wrong_img_name = random.choice(wrong_image_names)
 
             if random.choice([True, False]):
                 y = torch.ones(1).float()
