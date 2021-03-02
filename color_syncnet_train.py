@@ -37,6 +37,17 @@ syncnet_mel_step_size = 16
 class Dataset(object):
     def __init__(self, split):
         self.all_videos = get_image_list(args.data_root, split)
+        self.img_names = {
+            vidname: list(glob(join(vidname, '*.png'))) for vidname in self.all_videos
+        }
+
+        self.orig_mels = {}
+        for vidname in self.all_videos:
+            wavpath = join(vidname, "audio.wav")
+            wav = audio.load_wav(wavpath, hparams.sample_rate)
+
+            orig_mel = audio.melspectrogram(wav).T
+            self.orig_mels[vidname] = orig_mel
 
     def get_frame_id(self, frame):
         return int(basename(frame).split('.')[0])
@@ -71,13 +82,14 @@ class Dataset(object):
             idx = random.randint(0, len(self.all_videos) - 1)
             vidname = self.all_videos[idx]
 
-            img_names = list(glob(join(vidname, '*.png')))
+            img_names = self.img_names[vidname]
             if len(img_names) <= 3 * syncnet_T:
                 continue
             img_name = random.choice(img_names)
-            wrong_img_name = random.choice(img_names)
+            wrong_image_names = self.img_names[random.choice(self.img_names.keys())]
+            wrong_img_name = random.choice(wrong_image_names)
             while wrong_img_name == img_name:
-                wrong_img_name = random.choice(img_names)
+                wrong_img_name = random.choice(wrong_img_name)
 
             if random.choice([True, False]):
                 y = torch.ones(1).float()
@@ -107,14 +119,7 @@ class Dataset(object):
 
             if not all_read: continue
 
-            try:
-                wavpath = join(vidname, "audio.wav")
-                wav = audio.load_wav(wavpath, hparams.sample_rate)
-
-                orig_mel = audio.melspectrogram(wav).T
-            except Exception as e:
-                continue
-
+            orig_mel = self.orig_mels[vidname]
             mel = self.crop_audio_window(orig_mel.copy(), img_name)
 
             if (mel.shape[0] != syncnet_mel_step_size):
