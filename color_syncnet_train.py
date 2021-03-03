@@ -15,6 +15,7 @@ from glob import glob
 
 import os, random, cv2, argparse
 from hparams import hparams, get_image_list
+from data import Dataset
 
 parser = argparse.ArgumentParser(description='Code to train the expert lip-sync discriminator')
 
@@ -31,51 +32,7 @@ global_epoch = 0
 use_cuda = torch.cuda.is_available()
 print('use_cuda: {}'.format(use_cuda))
 
-syncnet_T = 5
-syncnet_mel_step_size = 16
-
-class Dataset(object):
-    def __init__(self, split):
-        self.all_videos = get_image_list(args.data_root, split)
-        self.img_names = {
-            vidname: list(glob(join(vidname, '*.png'))) for vidname in self.all_videos
-        }
-
-        self.orig_mels = {}
-        for vidname in self.all_videos:
-            wavpath = join(vidname, "audio.wav")
-            wav = audio.load_wav(wavpath, hparams.sample_rate)
-
-            orig_mel = audio.melspectrogram(wav).T
-            self.orig_mels[vidname] = orig_mel
-
-    def get_frame_id(self, frame):
-        return int(basename(frame).split('.')[0])
-
-    def get_window(self, start_frame):
-        start_id = self.get_frame_id(start_frame)
-        vidname = dirname(start_frame)
-
-        window_fnames = []
-        for frame_id in range(start_id, start_id + syncnet_T):
-            frame = join(vidname, '{}.png'.format(frame_id))
-            if not isfile(frame):
-                return None
-            window_fnames.append(frame)
-        return window_fnames
-
-    def crop_audio_window(self, spec, start_frame):
-        # num_frames = (T x hop_size * fps) / sample_rate
-        start_frame_num = self.get_frame_id(start_frame)
-        start_idx = int(80. * (start_frame_num / float(hparams.fps)))
-
-        end_idx = start_idx + syncnet_mel_step_size
-
-        return spec[start_idx : end_idx, :]
-
-
-    def __len__(self):
-        return sum([len(self.img_names[vid]) for vid in self.all_videos])
+class SyncnetDataset(Dataset):
 
     def __getitem__(self, idx):
         while 1:
@@ -83,7 +40,7 @@ class Dataset(object):
             vidname = self.all_videos[idx]
 
             img_names = self.img_names[vidname]
-            if len(img_names) <= 3 * syncnet_T:
+            if len(img_names) <= 3 * self.syncnet_T:
                 continue
             img_name = random.choice(img_names)
             wrong_image_names = self.img_names[random.choice(list(self.img_names.keys()))]
@@ -122,7 +79,7 @@ class Dataset(object):
             orig_mel = self.orig_mels[vidname]
             mel = self.crop_audio_window(orig_mel.copy(), img_name)
 
-            if (mel.shape[0] != syncnet_mel_step_size):
+            if (mel.shape[0] != self.syncnet_mel_step_size):
                 continue
 
             # H x W x 3 * T
@@ -255,8 +212,8 @@ if __name__ == "__main__":
     if not os.path.exists(checkpoint_dir): os.mkdir(checkpoint_dir)
 
     # Dataset and Dataloader setup
-    train_dataset = Dataset('train')
-    test_dataset = Dataset('val')
+    train_dataset = SyncnetDataset('train')
+    test_dataset = SyncnetDataset('val')
 
     train_data_loader = data_utils.DataLoader(
         train_dataset, batch_size=hparams.syncnet_batch_size, shuffle=True,
