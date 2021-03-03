@@ -220,7 +220,7 @@ def save_checkpoint(model, optimizer, step, checkpoint_dir, epoch):
         checkpoint_dir, "checkpoint_step{:09d}.pth".format(global_step))
     optimizer_state = optimizer.state_dict() if hparams.save_optimizer_state else None
     torch.save({
-        "state_dict": model.state_dict(),
+        "state_dict": model.module.state_dict(),
         "optimizer": optimizer_state,
         "global_step": step,
         "global_epoch": epoch,
@@ -290,6 +290,7 @@ if __name__ == "__main__":
     if not os.path.exists(checkpoint_dir):
         os.mkdir(checkpoint_dir)
 
+    model = nn.DataParallel(model)
     # Train!
     train(device, model, train_data_loader, test_data_loader, optimizer,
               checkpoint_dir=checkpoint_dir,
