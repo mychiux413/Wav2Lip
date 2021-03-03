@@ -20,8 +20,8 @@ class Dataset(object):
     syncnet_T = 5
     syncnet_mel_step_size = 16
 
-    def __init__(self, split):
-        self.all_videos = get_image_list(args.data_root, split)
+    def __init__(self, split, data_root):
+        self.all_videos = get_image_list(data_root, split)
         self.img_names = {
             vidname: list(glob(join(vidname, '*.png'))) for vidname in self.all_videos
         }
@@ -33,6 +33,7 @@ class Dataset(object):
 
             orig_mel = audio.melspectrogram(wav).T
             self.orig_mels[vidname] = orig_mel
+        self.data_root = data_root
 
     def get_frame_id(self, frame):
         return int(basename(frame).split('.')[0])
