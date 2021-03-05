@@ -19,6 +19,7 @@ import audio
 from hparams import hparams as hp
 
 import face_detection
+from utils.stream import stream_video_as_batch
 
 parser = argparse.ArgumentParser()
 
@@ -38,21 +39,13 @@ template = 'ffmpeg -loglevel panic -y -i {} -strict -2 {}'
 def process_video_file(vfile, args, gpu_id):
 	video_stream = cv2.VideoCapture(vfile)
 	
-	frames = []
-	while 1:
-		still_reading, frame = video_stream.read()
-		if not still_reading:
-			video_stream.release()
-			break
-		frames.append(frame)
-	
 	vidname = os.path.basename(vfile).split('.')[0]
 	dirname = vfile.split('/')[-2]
 
 	fulldir = path.join(args.preprocessed_root, dirname, vidname)
 	os.makedirs(fulldir, exist_ok=True)
 
-	batches = [frames[i:i + args.batch_size] for i in range(0, len(frames), args.batch_size)]
+	batches = stream_video_as_batch(vfile, args.batch_size)
 
 	i = -1
 	for fb in batches:
@@ -64,7 +57,7 @@ def process_video_file(vfile, args, gpu_id):
 				continue
 
 			x1, y1, x2, y2 = f
-			cv2.imwrite(path.join(fulldir, '{}.jpg'.format(i)), fb[j][y1:y2, x1:x2])
+			cv2.imwrite(path.join(fulldir, '{}.png'.format(i)), fb[j][y1:y2, x1:x2])
 
 def process_audio_file(vfile, args):
 	vidname = os.path.basename(vfile).split('.')[0]

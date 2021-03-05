@@ -17,6 +17,7 @@ from glob import glob
 
 import os, random, cv2, argparse
 from hparams import hparams, get_image_list
+from wav2lip_train import Wav2LipDataset
 
 parser = argparse.ArgumentParser(description='Code to train the Wav2Lip model WITH the visual quality discriminator')
 
@@ -36,134 +37,6 @@ global_epoch = 0
 use_cuda = torch.cuda.is_available()
 print('use_cuda: {}'.format(use_cuda))
 
-syncnet_T = 5
-syncnet_mel_step_size = 16
-
-class Dataset(object):
-    def __init__(self, split):
-        self.all_videos = get_image_list(args.data_root, split)
-
-    def get_frame_id(self, frame):
-        return int(basename(frame).split('.')[0])
-
-    def get_window(self, start_frame):
-        start_id = self.get_frame_id(start_frame)
-        vidname = dirname(start_frame)
-
-        window_fnames = []
-        for frame_id in range(start_id, start_id + syncnet_T):
-            frame = join(vidname, '{}.jpg'.format(frame_id))
-            if not isfile(frame):
-                return None
-            window_fnames.append(frame)
-        return window_fnames
-
-    def read_window(self, window_fnames):
-        if window_fnames is None: return None
-        window = []
-        for fname in window_fnames:
-            img = cv2.imread(fname)
-            if img is None:
-                return None
-            try:
-                img = cv2.resize(img, (hparams.img_size, hparams.img_size))
-            except Exception as e:
-                return None
-
-            window.append(img)
-
-        return window
-
-    def crop_audio_window(self, spec, start_frame):
-        if type(start_frame) == int:
-            start_frame_num = start_frame
-        else:
-            start_frame_num = self.get_frame_id(start_frame)
-        start_idx = int(80. * (start_frame_num / float(hparams.fps)))
-        
-        end_idx = start_idx + syncnet_mel_step_size
-
-        return spec[start_idx : end_idx, :]
-
-    def get_segmented_mels(self, spec, start_frame):
-        mels = []
-        assert syncnet_T == 5
-        start_frame_num = self.get_frame_id(start_frame) + 1 # 0-indexing ---> 1-indexing
-        if start_frame_num - 2 < 0: return None
-        for i in range(start_frame_num, start_frame_num + syncnet_T):
-            m = self.crop_audio_window(spec, i - 2)
-            if m.shape[0] != syncnet_mel_step_size:
-                return None
-            mels.append(m.T)
-
-        mels = np.asarray(mels)
-
-        return mels
-
-    def prepare_window(self, window):
-        # 3 x T x H x W
-        x = np.asarray(window) / 255.
-        x = np.transpose(x, (3, 0, 1, 2))
-
-        return x
-
-    def __len__(self):
-        return len(self.all_videos)
-
-    def __getitem__(self, idx):
-        while 1:
-            idx = random.randint(0, len(self.all_videos) - 1)
-            vidname = self.all_videos[idx]
-            img_names = list(glob(join(vidname, '*.jpg')))
-            if len(img_names) <= 3 * syncnet_T:
-                continue
-            
-            img_name = random.choice(img_names)
-            wrong_img_name = random.choice(img_names)
-            while wrong_img_name == img_name:
-                wrong_img_name = random.choice(img_names)
-
-            window_fnames = self.get_window(img_name)
-            wrong_window_fnames = self.get_window(wrong_img_name)
-            if window_fnames is None or wrong_window_fnames is None:
-                continue
-
-            window = self.read_window(window_fnames)
-            if window is None:
-                continue
-
-            wrong_window = self.read_window(wrong_window_fnames)
-            if wrong_window is None:
-                continue
-
-            try:
-                wavpath = join(vidname, "audio.wav")
-                wav = audio.load_wav(wavpath, hparams.sample_rate)
-
-                orig_mel = audio.melspectrogram(wav).T
-            except Exception as e:
-                continue
-
-            mel = self.crop_audio_window(orig_mel.copy(), img_name)
-            
-            if (mel.shape[0] != syncnet_mel_step_size):
-                continue
-
-            indiv_mels = self.get_segmented_mels(orig_mel.copy(), img_name)
-            if indiv_mels is None: continue
-
-            window = self.prepare_window(window)
-            y = window.copy()
-            window[:, :, window.shape[2]//2:] = 0.
-
-            wrong_window = self.prepare_window(wrong_window)
-            x = np.concatenate([window, wrong_window], axis=0)
-
-            x = torch.FloatTensor(x)
-            mel = torch.FloatTensor(mel.T).unsqueeze(0)
-            indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)
-            y = torch.FloatTensor(y)
-            return x, indiv_mels, mel, y
 
 def save_sample_images(x, g, gt, global_step, checkpoint_dir):
     x = (x.detach().cpu().numpy().transpose(0, 2, 3, 4, 1) * 255.).astype(np.uint8)
@@ -176,7 +49,7 @@ def save_sample_images(x, g, gt, global_step, checkpoint_dir):
     collage = np.concatenate((refs, inps, g, gt), axis=-2)
     for batch_idx, c in enumerate(collage):
         for t in range(len(c)):
-            cv2.imwrite('{}/{}_{}.jpg'.format(folder, batch_idx, t), c[t])
+            cv2.imwrite('{}/{}_{}.png'.format(folder, batch_idx, t), c[t])
 
 logloss = nn.BCELoss()
 def cosine_loss(a, v, y):
@@ -193,7 +66,7 @@ for p in syncnet.parameters():
 recon_loss = nn.L1Loss()
 def get_sync_loss(mel, g):
     g = g[:, :, :, g.size(3)//2:]
-    g = torch.cat([g[:, :, i] for i in range(syncnet_T)], dim=1)
+    g = torch.cat([g[:, :, i] for i in range(Wav2LipDataset.syncnet_T)], dim=1)
     # B, 3 * T, H//2, W
     a, v = syncnet(mel, g)
     y = torch.ones(g.size(0), 1).float().to(device)
@@ -356,7 +229,7 @@ def save_checkpoint(model, optimizer, step, checkpoint_dir, epoch, prefix=''):
         checkpoint_dir, "{}checkpoint_step{:09d}.pth".format(prefix, global_step))
     optimizer_state = optimizer.state_dict() if hparams.save_optimizer_state else None
     torch.save({
-        "state_dict": model.state_dict(),
+        "state_dict": model.state_dict() if getattr(model, 'module', None) is None else model.module.state_dict(),
         "optimizer": optimizer_state,
         "global_step": step,
         "global_epoch": epoch,
@@ -398,8 +271,8 @@ if __name__ == "__main__":
     checkpoint_dir = args.checkpoint_dir
 
     # Dataset and Dataloader setup
-    train_dataset = Dataset('train')
-    test_dataset = Dataset('val')
+    train_dataset = Wav2LipDataset('train', args.data_root)
+    test_dataset = Wav2LipDataset('val', args.data_root)
 
     train_data_loader = data_utils.DataLoader(
         train_dataset, batch_size=hparams.batch_size, shuffle=True,
@@ -436,6 +309,7 @@ if __name__ == "__main__":
     if not os.path.exists(checkpoint_dir):
         os.mkdir(checkpoint_dir)
 
+    model = nn.DataParallel(model)
     # Train!
     train(device, model, disc, train_data_loader, test_data_loader, optimizer, disc_optimizer,
               checkpoint_dir=checkpoint_dir,
