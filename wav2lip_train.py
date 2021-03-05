@@ -46,8 +46,7 @@ class Wav2LipDataset(Dataset):
                 continue
             
             img_name = random.choice(img_names)
-            wrong_image_names = self.img_names[random.choice(list(self.img_names.keys()))]
-            wrong_img_name = random.choice(wrong_image_names)
+            wrong_img_name = random.choice(img_names)
             while wrong_img_name == img_name:
                 wrong_img_name = random.choice(img_names)
 
