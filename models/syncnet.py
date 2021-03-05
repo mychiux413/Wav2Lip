@@ -2,55 +2,61 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .conv import Conv2d
+from .conv import Conv2d, evaluate_conv_layers, evaluate_new_size_after_conv, create_audio_encoder
+from hparams import hparams as hp
+import numpy as np
 
 class SyncNet_color(nn.Module):
     def __init__(self):
         super(SyncNet_color, self).__init__()
 
-        self.face_encoder = nn.Sequential(
-            Conv2d(15, 32, kernel_size=(7, 7), stride=1, padding=3),
+        n_layers = evaluate_conv_layers(hp.img_size)
+        sequentials = []
+        channels = 16
 
-            Conv2d(32, 64, kernel_size=5, stride=(1, 2), padding=1),
-            Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
-            Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
+        last_face_x_size = hp.img_size // 2
+        last_face_y_size = hp.img_size
+        for i in range(n_layers):
+            if i == 0:
+                sequentials.append(Conv2d(15, channels * 2, kernel_size=(7, 7), stride=1, padding=3))
+                last_face_x_size = evaluate_new_size_after_conv(last_face_x_size, 7, 1, 3)
+                last_face_y_size = evaluate_new_size_after_conv(last_face_y_size, 7, 1, 3)
+            elif i == 1:
+                sequentials.append(Conv2d(channels, channels * 2, kernel_size=5, stride=(1, 2), padding=1))
+                sequentials.append(Conv2d(channels * 2, channels * 2, kernel_size=3, stride=1, padding=1, residual=True))
+                sequentials.append(Conv2d(channels * 2, channels * 2, kernel_size=3, stride=1, padding=1, residual=True))
+                last_face_x_size = evaluate_new_size_after_conv(last_face_x_size, 5, 1, 1)
+                last_face_y_size = evaluate_new_size_after_conv(last_face_y_size, 5, 2, 1)
+            elif i == n_layers - 1:
+                sequentials.append(Conv2d(channels, channels, kernel_size=3, stride=2, padding=1))
+                last_face_x_size = evaluate_new_size_after_conv(last_face_x_size, 3, 2, 1)
+                last_face_y_size = evaluate_new_size_after_conv(last_face_y_size, 3, 2, 1)
 
-            Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
-            Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
-            Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
-            Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
+                sequentials.append(Conv2d(channels, channels, kernel_size=3, stride=1, padding=0))
+                last_face_x_size = evaluate_new_size_after_conv(last_face_x_size, 3, 1, 0)
+                last_face_y_size = evaluate_new_size_after_conv(last_face_y_size, 3, 1, 0)
+    
+                sequentials.append(Conv2d(channels, channels, kernel_size=1, stride=1, padding=0))
+                last_face_x_size = evaluate_new_size_after_conv(last_face_x_size, 1, 1, 0)
+                last_face_y_size = evaluate_new_size_after_conv(last_face_y_size, 1, 1, 0)
+                
+            else:
+                sequentials.append(Conv2d(channels, channels * 2, kernel_size=3, stride=2, padding=1))
+                last_face_x_size = evaluate_new_size_after_conv(last_face_x_size, 3, 2, 1)
+                last_face_y_size = evaluate_new_size_after_conv(last_face_y_size, 3, 2, 1)
 
-            Conv2d(128, 256, kernel_size=3, stride=2, padding=1),
-            Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
-            Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
+                sequentials.append(Conv2d(channels * 2, channels * 2, kernel_size=3, stride=1, padding=1, residual=True))
+                sequentials.append(Conv2d(channels * 2, channels * 2, kernel_size=3, stride=1, padding=1, residual=True))
 
-            Conv2d(256, 512, kernel_size=3, stride=2, padding=1),
-            Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
-            Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
+            channels *= 2
+        assert last_face_x_size == 1, last_face_x_size
+        assert last_face_y_size == 1, last_face_y_size
+        self.face_encoder = nn.Sequential(*sequentials)
 
-            Conv2d(512, 512, kernel_size=3, stride=2, padding=1),
-            Conv2d(512, 512, kernel_size=3, stride=1, padding=0),
-            Conv2d(512, 512, kernel_size=1, stride=1, padding=0),)
+        face_final_channels = channels // 2
+        audio_layers = int(np.log(face_final_channels) / np.log(2) - 4)
 
-        self.audio_encoder = nn.Sequential(
-            Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
-            Conv2d(32, 32, kernel_size=3, stride=1, padding=1, residual=True),
-            Conv2d(32, 32, kernel_size=3, stride=1, padding=1, residual=True),
-
-            Conv2d(32, 64, kernel_size=3, stride=(3, 1), padding=1),
-            Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
-            Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
-
-            Conv2d(64, 128, kernel_size=3, stride=3, padding=1),
-            Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
-            Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
-
-            Conv2d(128, 256, kernel_size=3, stride=(3, 2), padding=1),
-            Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
-            Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
-
-            Conv2d(256, 512, kernel_size=3, stride=1, padding=0),
-            Conv2d(512, 512, kernel_size=1, stride=1, padding=0),)
+        self.audio_encoder = create_audio_encoder(hp.num_mels, hp.syncnet_mel_step_size, audio_layers)
 
     def forward(self, audio_sequences, face_sequences): # audio_sequences := (B, dim, T)
         face_embedding = self.face_encoder(face_sequences)
