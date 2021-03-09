@@ -73,7 +73,7 @@ hparams = HParams(
 	fmax=7600,  # To be increased/reduced depending on data.
 
 	###################### Our training parameters #################################
-	img_size=96,
+	img_size=96,  # 96 or 192
 	fps=25,
 	
 	batch_size=16,
@@ -89,6 +89,8 @@ hparams = HParams(
 	syncnet_lr=1e-4,
 	syncnet_eval_interval=10000,
 	syncnet_checkpoint_interval=10000,
+	syncnet_T=5,
+	syncnet_mel_step_size=16,
 
 	disc_wt=0.07,
 	disc_initial_learning_rate=1e-4,
