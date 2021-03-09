@@ -47,7 +47,9 @@ class SyncNet_color(nn.Module):
 
                 sequentials.append(Conv2d(channels * 2, channels * 2, kernel_size=3, stride=1, padding=1, residual=True))
                 sequentials.append(Conv2d(channels * 2, channels * 2, kernel_size=3, stride=1, padding=1, residual=True))
-
+                if i == 2:
+                    sequentials.append(Conv2d(channels * 2, channels * 2, kernel_size=3, stride=1, padding=1, residual=True))
+            print("[syncnet] face_encoder x, y", last_face_x_size, last_face_y_size)
             channels *= 2
         assert last_face_x_size == 1, last_face_x_size
         assert last_face_y_size == 1, last_face_y_size
@@ -56,7 +58,9 @@ class SyncNet_color(nn.Module):
         face_final_channels = channels // 2
         audio_layers = int(np.log(face_final_channels) / np.log(2) - 4)
 
-        self.audio_encoder = create_audio_encoder(hp.num_mels, hp.syncnet_mel_step_size, audio_layers)
+        self.audio_encoder, audio_shapes = create_audio_encoder(audio_layers, hp.syncnet_batch_size)
+        print("[syncnet] review audio_encoder shapes")
+        print(*audio_shapes, sep='\n')
 
     def forward(self, audio_sequences, face_sequences): # audio_sequences := (B, dim, T)
         face_embedding = self.face_encoder(face_sequences)
