@@ -57,6 +57,8 @@ def process_video_file(vfile, args, gpu_id):
 				continue
 
 			x1, y1, x2, y2 = f
+			height = fb[j].shape[0]
+			y2 = min(height, y2 + 20)  # add chin
 			cv2.imwrite(path.join(fulldir, '{}.png'.format(i)), fb[j][y1:y2, x1:x2])
 
 def process_audio_file(vfile, args):
