@@ -7,6 +7,7 @@ from glob import glob
 import torch, face_detection
 from models import Wav2Lip
 import platform
+from hparams import hparams as hp
 
 parser = argparse.ArgumentParser(description='Inference code to lip-sync videos in the wild using Wav2Lip models')
 
@@ -51,7 +52,7 @@ parser.add_argument('--nosmooth', default=False, action='store_true',
 					help='Prevent smoothing face detections over a short temporal window')
 
 args = parser.parse_args()
-args.img_size = 96
+args.img_size = hp.img_size
 
 if os.path.isfile(args.face) and args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
 	args.static = True
@@ -99,7 +100,7 @@ def face_detect(images):
 		results.append([x1, y1, x2, y2])
 
 	boxes = np.array(results)
-	if not args.nosmooth: boxes = get_smoothened_boxes(boxes, T=5)
+	if not args.nosmooth: boxes = get_smoothened_boxes(boxes, T=hp.syncnet_T)
 	results = [[image[y1: y2, x1:x2], (y1, y2, x1, x2)] for image, (x1, y1, x2, y2) in zip(images, boxes)]
 
 	del detector
@@ -153,7 +154,7 @@ def datagen(frames, mels):
 
 		yield img_batch, mel_batch, frame_batch, coords_batch
 
-mel_step_size = 16
+mel_step_size = hp.syncnet_mel_step_size
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print('Using {} for inference.'.format(device))
 
@@ -221,7 +222,7 @@ def main():
 		subprocess.call(command, shell=True)
 		args.audio = 'temp/temp.wav'
 
-	wav = audio.load_wav(args.audio, 16000)
+	wav = audio.load_wav(args.audio, hp.sample_rate)
 	mel = audio.melspectrogram(wav)
 	print(mel.shape)
 
@@ -229,7 +230,7 @@ def main():
 		raise ValueError('Mel contains nan! Using a TTS voice? Add a small epsilon noise to the wav file and try again')
 
 	mel_chunks = []
-	mel_idx_multiplier = 80./fps 
+	mel_idx_multiplier = hp.num_mels/fps 
 	i = 0
 	while 1:
 		start_idx = int(i * mel_idx_multiplier)
