@@ -21,19 +21,29 @@ class Dataset(object):
     syncnet_mel_step_size = 16
 
     def __init__(self, split, data_root):
+        print("init dataset: {} for data_root: {}".format(split, data_root))
         self.all_videos = get_image_list(data_root, split)
         self.img_names = {
             vidname: list(glob(join(vidname, '*.png'))) for vidname in self.all_videos
         }
 
         self.orig_mels = {}
-        for vidname in self.all_videos:
+        self.data_root = data_root
+        print("dataset {} done!".format(split))
+
+    def get_mel(self, vidname):
+        if vidname in self.orig_mels:
+            return self.orig_mels[vidname]
+        try:
             wavpath = join(vidname, "audio.wav")
             wav = audio.load_wav(wavpath, hparams.sample_rate)
 
             orig_mel = audio.melspectrogram(wav).T
             self.orig_mels[vidname] = orig_mel
-        self.data_root = data_root
+            return orig_mel
+        except Exception as err:
+            print(err)
+            return None
 
     def get_frame_id(self, frame):
         return int(basename(frame).split('.')[0])

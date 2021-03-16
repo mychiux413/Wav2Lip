@@ -63,7 +63,9 @@ class Wav2LipDataset(Dataset):
             if wrong_window is None:
                 continue
 
-            orig_mel = self.orig_mels[vidname]
+            orig_mel = self.get_mel(vidname)
+            if orig_mel is None:
+                continue
             mel = self.crop_audio_window(orig_mel.copy(), img_name)
             
             if (mel.shape[0] != self.syncnet_mel_step_size):
@@ -265,7 +267,7 @@ if __name__ == "__main__":
     test_dataset = Wav2LipDataset('val', args.data_root)
 
     train_data_loader = data_utils.DataLoader(
-        train_dataset, batch_size=hparams.batch_size, shuffle=True,
+        train_dataset, batch_size=hparams.batch_size,
         num_workers=hparams.num_workers)
 
     test_data_loader = data_utils.DataLoader(
