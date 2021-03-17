@@ -17,33 +17,23 @@ import os, random, cv2, argparse
 from hparams import hparams, get_image_list
 
 class Dataset(object):
-    syncnet_T = hparams.syncnet_T
-    syncnet_mel_step_size = hparams.syncnet_mel_step_size
+    syncnet_T = 5
+    syncnet_mel_step_size = 16
 
     def __init__(self, split, data_root):
-        print("init dataset: {} for data_root: {}".format(split, data_root))
         self.all_videos = get_image_list(data_root, split)
         self.img_names = {
             vidname: list(glob(join(vidname, '*.png'))) for vidname in self.all_videos
         }
 
         self.orig_mels = {}
-        self.data_root = data_root
-        print("dataset {} done!".format(split))
-
-    def get_mel(self, vidname):
-        if vidname in self.orig_mels:
-            return self.orig_mels[vidname]
-        try:
+        for vidname in self.all_videos:
             wavpath = join(vidname, "audio.wav")
             wav = audio.load_wav(wavpath, hparams.sample_rate)
 
             orig_mel = audio.melspectrogram(wav).T
             self.orig_mels[vidname] = orig_mel
-            return orig_mel
-        except Exception as err:
-            print(err)
-            return None
+        self.data_root = data_root
 
     def get_frame_id(self, frame):
         return int(basename(frame).split('.')[0])
@@ -80,6 +70,7 @@ class Dataset(object):
 
     def get_segmented_mels(self, spec, start_frame):
         mels = []
+        assert self.syncnet_T == 5
         start_frame_num = self.get_frame_id(start_frame) + 1 # 0-indexing ---> 1-indexing
         if start_frame_num - 2 < 0: return None
         for i in range(start_frame_num, start_frame_num + self.syncnet_T):

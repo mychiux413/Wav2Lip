@@ -63,9 +63,7 @@ class Wav2LipDataset(Dataset):
             if wrong_window is None:
                 continue
 
-            orig_mel = self.get_mel(vidname)
-            if orig_mel is None:
-                continue
+            orig_mel = self.orig_mels[vidname]
             mel = self.crop_audio_window(orig_mel.copy(), img_name)
             
             if (mel.shape[0] != self.syncnet_mel_step_size):
