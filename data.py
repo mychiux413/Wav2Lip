@@ -15,6 +15,7 @@ from glob import glob
 
 import os, random, cv2, argparse
 from hparams import hparams, get_image_list
+from tqdm import tqdm
 
 class Dataset(object):
     syncnet_T = hparams.syncnet_T
@@ -27,11 +28,21 @@ class Dataset(object):
         }
 
         self.orig_mels = {}
-        for vidname in self.all_videos:
+        for vidname in tqdm(self.all_videos, desc="load mels"):
+            mel_path = join(vidname, "mel.npy")
             wavpath = join(vidname, "audio.wav")
-            wav = audio.load_wav(wavpath, hparams.sample_rate)
-
-            orig_mel = audio.melspectrogram(wav).T
+            if os.path.exists(mel_path):
+                try:
+                    orig_mel = np.load(mel_path)
+                except Exception as err:
+                    print(err)
+                    wav = audio.load_wav(wavpath, hparams.sample_rate)
+                    orig_mel = audio.melspectrogram(wav).T
+                    np.save(mel_path, orig_mel)
+            else:
+                wav = audio.load_wav(wavpath, hparams.sample_rate)
+                orig_mel = audio.melspectrogram(wav).T
+                np.save(mel_path, orig_mel)
             self.orig_mels[vidname] = orig_mel
         self.data_root = data_root
 
