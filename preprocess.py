@@ -47,7 +47,7 @@ def process_video_file(vfile, args, gpu_id):
 
 	video_stream.release()
 
-	batch_size = int(n_pixels_1080p / n_pixels_of_video * args.batch_size)
+	batch_size = max(int(n_pixels_1080p / n_pixels_of_video * args.batch_size), 1)
 	
 	vidname = os.path.basename(vfile).split('.')[0]
 	dirname = vfile.split('/')[-2]
