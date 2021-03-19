@@ -94,7 +94,7 @@ class Wav2Lip(nn.Module):
         face_final_channels = channels // 2
         audio_layers = int(np.log(face_final_channels) / np.log(2) - 4)
 
-        self.audio_encoder, audio_shapes = create_audio_encoder(audio_layers, hp.batch_size)
+        self.audio_encoder, audio_shapes = create_audio_encoder(audio_layers, hp.batch_size, for_wav2lip=True)
         print("[wav2lip] review audio_encoder shapes")
         print("[wav2lip] face_final_channels after encode", face_final_channels)
         print("[wav2lip] face encoder block channels", face_encoder_channels)

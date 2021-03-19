@@ -215,7 +215,7 @@ if __name__ == "__main__":
     test_dataset = SyncnetDataset('val', args.data_root)
 
     train_data_loader = data_utils.DataLoader(
-        train_dataset, batch_size=hparams.syncnet_batch_size, shuffle=True,
+        train_dataset, batch_size=hparams.syncnet_batch_size,
         num_workers=hparams.num_workers)
 
     test_data_loader = data_utils.DataLoader(

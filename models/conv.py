@@ -60,7 +60,7 @@ def evaluate_new_size_after_transpose_conv(input_size, kernel_size, stride, padd
     return stride * (input_size - 1) + kernel_size - 2 * padding + output_padding
 
 
-def create_audio_encoder(audio_layers, batch_size):
+def create_audio_encoder(audio_layers, batch_size, for_wav2lip=False):
     print("create audio_layers:", audio_layers)
     assert audio_layers <= 7
     sequentials = []
@@ -112,7 +112,8 @@ def create_audio_encoder(audio_layers, batch_size):
 
                     sequentials.append(Conv2d(channels, channels * 2, kernel_size=3, stride=(3, 2), padding=1))
                     sequentials.append(Conv2d(channels * 2, channels * 2, kernel_size=3, stride=1, padding=1, residual=True))
-                    sequentials.append(Conv2d(channels * 2, channels * 2, kernel_size=3, stride=1, padding=1, residual=True))
+                    if not for_wav2lip:
+                        sequentials.append(Conv2d(channels * 2, channels * 2, kernel_size=3, stride=1, padding=1, residual=True))
 
                     mel_channel_size = evaluate_new_size_after_conv(mel_channel_size, 3, 3, 1)
                     mel_step_size = evaluate_new_size_after_conv(mel_step_size, 3, 2, 1)

@@ -37,7 +37,17 @@ template = 'ffmpeg -loglevel panic -y -i {} -strict -2 {}'
 # template2 = 'ffmpeg -hide_banner -loglevel panic -threads 1 -y -i {} -async 1 -ac 1 -vn -acodec pcm_s16le -ar 16000 {}'
 
 def process_video_file(vfile, args, gpu_id):
+	n_pixels_1080p = 1920 * 1080
+
 	video_stream = cv2.VideoCapture(vfile)
+	width  = video_stream.get(cv2.CAP_PROP_FRAME_WIDTH)
+	height = video_stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
+
+	n_pixels_of_video = width * height
+
+	video_stream.release()
+
+	batch_size = int(n_pixels_1080p / n_pixels_of_video * args.batch_size)
 	
 	vidname = os.path.basename(vfile).split('.')[0]
 	dirname = vfile.split('/')[-2]
@@ -45,7 +55,7 @@ def process_video_file(vfile, args, gpu_id):
 	fulldir = path.join(args.preprocessed_root, dirname, vidname)
 	os.makedirs(fulldir, exist_ok=True)
 
-	batches = stream_video_as_batch(vfile, args.batch_size)
+	batches = stream_video_as_batch(vfile, batch_size)
 
 	i = -1
 	for fb in batches:
