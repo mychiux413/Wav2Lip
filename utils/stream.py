@@ -61,3 +61,6 @@ def stream_video_as_batch(filepath, batch_size, steps=1, infinite_loop=False):
             for _ in range(steps):
                 batch.pop(0)
         batch.append(frame)
+    if len(batch) > 0:
+        yield batch
+
