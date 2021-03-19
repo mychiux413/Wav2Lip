@@ -55,7 +55,7 @@ def process_video_file(vfile, args, gpu_id):
 	fulldir = path.join(args.preprocessed_root, dirname, vidname)
 	os.makedirs(fulldir, exist_ok=True)
 
-	batches = stream_video_as_batch(vfile, batch_size)
+	batches = stream_video_as_batch(vfile, batch_size, steps=batch_size)
 
 	i = -1
 	for fb in batches:
