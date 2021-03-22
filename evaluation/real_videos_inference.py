@@ -214,7 +214,7 @@ def main():
 		audio_src = os.path.join(args.data_root, audio_src)
 		video = os.path.join(args.data_root, video)
 
-		command = 'ffmpeg -loglevel panic -y -i {} -strict -2 {}'.format(audio_src, '../temp/temp.wav')
+		command = "ffmpeg -loglevel panic -y -i '{}' -strict -2 '{}'".format(audio_src, '../temp/temp.wav')
 		subprocess.call(command, shell=True)
 		temp_audio = '../temp/temp.wav'
 
@@ -296,7 +296,7 @@ def main():
 		out.release()
 
 		vid = os.path.join(args.results_dir, '{}.mp4'.format(idx))
-		command = 'ffmpeg -loglevel panic -y -i {} -i {} -strict -2 -q:v 1 {}'.format('../temp/temp.wav', 
+		command = "ffmpeg -loglevel panic -y -i '{}' -i '{}' -strict -2 -q:v 1 '{}'".format('../temp/temp.wav', 
 								'../temp/result.avi', vid)
 		subprocess.call(command, shell=True)
 

@@ -33,7 +33,7 @@ args = parser.parse_args()
 fa = [face_detection.FaceAlignment(face_detection.LandmarksType._2D, flip_input=False, 
 									device='cuda:{}'.format(id)) for id in range(args.ngpu)]
 
-template = 'ffmpeg -loglevel panic -y -i {} -strict -2 {}'
+template = "ffmpeg -loglevel panic -y -i '{}' -strict -2 '{}'"
 # template2 = 'ffmpeg -hide_banner -loglevel panic -threads 1 -y -i {} -async 1 -ac 1 -vn -acodec pcm_s16le -ar 16000 {}'
 
 def process_video_file(vfile, args, gpu_id):
