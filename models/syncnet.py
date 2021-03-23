@@ -18,7 +18,7 @@ class SyncNet_color(nn.Module):
         last_face_y_size = hp.img_size
         for i in range(n_layers):
             if i == 0:
-                sequentials.append(Conv2d(15, channels * 2, kernel_size=(7, 7), stride=1, padding=3))
+                sequentials.append(Conv2d(3 * hp.syncnet_T, channels * 2, kernel_size=(7, 7), stride=1, padding=3))
                 last_face_x_size = evaluate_new_size_after_conv(last_face_x_size, 7, 1, 3)
                 last_face_y_size = evaluate_new_size_after_conv(last_face_y_size, 7, 1, 3)
             elif i == 1:

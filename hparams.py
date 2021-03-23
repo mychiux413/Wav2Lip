@@ -7,7 +7,6 @@ def get_image_list(data_root, split):
 	with open('filelists/{}.txt'.format(split)) as f:
 		for line in f:
 			line = line.strip()
-			if ' ' in line: line = line.split()[0]
 			filelist.append(os.path.join(data_root, line))
 
 	return filelist
@@ -73,7 +72,7 @@ hparams = HParams(
 	fmax=7600,  # To be increased/reduced depending on data.
 
 	###################### Our training parameters #################################
-	img_size=96,  # 96 or 192
+	img_size=192,  # 96 or 192
 	fps=30,
 	
 	batch_size=8,

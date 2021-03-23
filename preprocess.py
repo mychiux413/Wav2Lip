@@ -33,10 +33,18 @@ args = parser.parse_args()
 fa = [face_detection.FaceAlignment(face_detection.LandmarksType._2D, flip_input=False, 
 									device='cuda:{}'.format(id)) for id in range(args.ngpu)]
 
-template = 'ffmpeg -loglevel panic -y -i {} -strict -2 {}'
+template = "ffmpeg -loglevel panic -y -i '{}' -strict -2 '{}'"
 # template2 = 'ffmpeg -hide_banner -loglevel panic -threads 1 -y -i {} -async 1 -ac 1 -vn -acodec pcm_s16le -ar 16000 {}'
 
 def process_video_file(vfile, args, gpu_id):
+	vidname = os.path.basename(vfile).split('.')[0]
+	dirname = vfile.split('/')[-2]
+
+	fulldir = path.join(args.preprocessed_root, dirname, vidname)
+	if os.path.exists(fulldir) and len(os.listdir(fulldir)) > 0:
+		return
+	os.makedirs(fulldir)
+
 	n_pixels_1080p = 1920 * 1080
 
 	video_stream = cv2.VideoCapture(vfile)
@@ -48,12 +56,6 @@ def process_video_file(vfile, args, gpu_id):
 	video_stream.release()
 
 	batch_size = max(int(n_pixels_1080p / n_pixels_of_video * args.batch_size), 1)
-	
-	vidname = os.path.basename(vfile).split('.')[0]
-	dirname = vfile.split('/')[-2]
-
-	fulldir = path.join(args.preprocessed_root, dirname, vidname)
-	os.makedirs(fulldir, exist_ok=True)
 
 	batches = stream_video_as_batch(vfile, batch_size, steps=batch_size)
 
@@ -79,6 +81,8 @@ def process_audio_file(vfile, args):
 	os.makedirs(fulldir, exist_ok=True)
 
 	wavpath = path.join(fulldir, 'audio.wav')
+	if os.path.exists(wavpath):
+		return
 
 	command = template.format(vfile, wavpath)
 	subprocess.call(command, shell=True)
