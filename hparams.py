@@ -1,13 +1,18 @@
 from glob import glob
 import os
 
-def get_image_list(data_root, split):
+def get_image_list(data_root, split, limit=0):
 	filelist = []
 
+	i = 0
 	with open('filelists/{}.txt'.format(split)) as f:
 		for line in f:
+			line = line.split('#')[0]
 			line = line.strip()
 			filelist.append(os.path.join(data_root, line))
+			i += 1
+			if limit > 0 and i > limit:
+				break
 
 	return filelist
 
