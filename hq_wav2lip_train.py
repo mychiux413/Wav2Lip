@@ -292,9 +292,11 @@ if __name__ == "__main__":
     print('total DISC trainable params {}'.format(sum(p.numel() for p in disc.parameters() if p.requires_grad)))
 
     optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad],
-                           lr=hparams.initial_learning_rate, betas=(0.5, 0.999))
+                           lr=hparams.initial_learning_rate, betas=(0.5, 0.999),
+                           amsgrad=hparams.opt_amsgrad, weight_decay=hparams.opt_weight_decay)
     disc_optimizer = optim.Adam([p for p in disc.parameters() if p.requires_grad],
-                           lr=hparams.disc_initial_learning_rate, betas=(0.5, 0.999))
+                           lr=hparams.disc_initial_learning_rate, betas=(0.5, 0.999),
+                           amsgrad=hparams.disc_opt_amsgrad, weight_decay=hparams.disc_opt_weight_decay)
 
     if args.checkpoint_path is not None:
         load_checkpoint(args.checkpoint_path, model, optimizer, reset_optimizer=False)

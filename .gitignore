@@ -154,6 +154,10 @@ evaluation/test_filelists/lr*.txt
 *.webm
 *.mp3
 
+.vscode/
 avspeech/
 data/
 temp/
+datasets/
+generate/
+temp*

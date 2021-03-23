@@ -278,7 +278,8 @@ if __name__ == "__main__":
     print('total trainable params {}'.format(sum(p.numel() for p in model.parameters() if p.requires_grad)))
 
     optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad],
-                           lr=hparams.initial_learning_rate)
+                           lr=hparams.initial_learning_rate,
+                           amsgrad=hparams.opt_amsgrad, weight_decay=hparams.opt_weight_decay)
 
     if args.checkpoint_path is not None:
         load_checkpoint(args.checkpoint_path, model, optimizer, reset_optimizer=False)
