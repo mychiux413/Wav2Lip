@@ -39,8 +39,7 @@ class Wav2LipDataset(Dataset):
 
     def __getitem__(self, idx):
         while 1:
-            idx = random.randint(0, len(self.all_videos) - 1)
-            vidname = self.all_videos[idx]
+            vidname = self.get_vidname(idx)
             img_names = self.img_names[vidname]
             if len(img_names) <= 3 * self.syncnet_T:
                 continue

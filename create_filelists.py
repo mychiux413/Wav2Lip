@@ -1,20 +1,199 @@
 import argparse
 import os
 import numpy as np
+from torch.utils import data as data_utils
+from models.syncnet import SyncNet_color as SyncNet
+from data import Dataset
+import random
+import torch
+from torch import nn
+from hparams import hparams as hp
+import audio
+from tqdm import tqdm
+from glob import glob
+import cv2
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--data_root', type=str, required=True)
 parser.add_argument('--train_ratio', type=float, required=False, default=0.95)
 parser.add_argument('--train_limit', type=int, required=False, default=0)
 parser.add_argument('--val_limit', type=int, required=False, default=0)
+parser.add_argument("--syncnet_checkpoint_path",
+                    help='Load the pre-trained Expert discriminator', required=False, default=None)
+parser.add_argument('--cosine_loss_mean_max',
+                    help='Pass the loss of datasets under specified mean value', default=1.9, type=float)
+parser.add_argument('--cosine_loss_std_max',
+                    help='Pass the loss of datasets under specified std value', default=3.0, type=float)
+parser.add_argument('--cosine_loss_epoch',
+                    help='Specify the epoch to evaluate cosine loss', default=10, type=int)
+parser.add_argument('--syncnet_img_size',
+                    help='Image Size of Syncnet', default=96, type=int)
 
 args = parser.parse_args()
+
+
+class SyncnetDataset(Dataset):
+    def __init__(self, data_root):
+        self.all_videos = []
+        for dirname in os.listdir(data_root):
+            dirpath = os.path.join(data_root, dirname)
+            for vid_dirname in os.listdir(dirpath):
+                video_path = os.path.join(dirpath, vid_dirname)
+                self.all_videos.append(video_path)
+
+        self.img_names = {
+            vidname: list(glob(os.path.join(vidname, '*.png'))) for vidname in self.all_videos
+        }
+
+        self.orig_mels = {}
+        for vidname in tqdm(self.all_videos, desc="load mels"):
+            mel_path = os.path.join(vidname, "mel.npy")
+            wavpath = os.path.join(vidname, "audio.wav")
+            assert os.path.exists(wavpath), "audio.wav not found at vidname: {}".format(
+                vidname
+            )
+            if os.path.exists(mel_path):
+                try:
+                    orig_mel = np.load(mel_path)
+                except Exception as err:
+                    print(err)
+                    wav = audio.load_wav(wavpath, hp.sample_rate)
+                    orig_mel = audio.melspectrogram(wav).T
+                    np.save(mel_path, orig_mel)
+            else:
+                wav = audio.load_wav(wavpath, hp.sample_rate)
+                orig_mel = audio.melspectrogram(wav).T
+                np.save(mel_path, orig_mel)
+            self.orig_mels[vidname] = orig_mel
+        self.data_root = data_root
+        self.inner_shuffle = False
+
+    def __getitem__(self, idx):
+        while 1:
+            vidname = self.get_vidname(idx)
+
+            img_names = self.img_names[vidname]
+            if len(img_names) <= 3 * self.syncnet_T:
+                idx += 1
+                idx %= len(self)
+                continue
+            img_name = random.choice(img_names)
+            wrong_img_name = random.choice(img_names)
+            while wrong_img_name == img_name:
+                wrong_img_name = random.choice(img_names)
+
+            if random.choice([True, False]):
+                y = torch.ones(1).float()
+                chosen = img_name
+            else:
+                y = torch.zeros(1).float()
+                chosen = wrong_img_name
+
+            window_fnames = self.get_window(chosen)
+            if window_fnames is None:
+                idx += 1
+                idx %= len(self)
+                continue
+
+            window = []
+            all_read = True
+            for fname in window_fnames:
+                img = cv2.imread(fname)
+                if img is None:
+                    all_read = False
+                    break
+                try:
+                    img = cv2.resize(
+                        img, (args.syncnet_img_size, args.syncnet_img_size))
+                except Exception as e:
+                    all_read = False
+                    break
+
+                window.append(img)
+
+            if not all_read:
+                idx += 1
+                idx %= len(self)
+                continue
+
+            orig_mel = self.orig_mels[vidname]
+            mel = self.crop_audio_window(orig_mel.copy(), img_name)
+
+            if (mel.shape[0] != self.syncnet_mel_step_size):
+                idx += 1
+                idx %= len(self)
+                continue
+
+            # H x W x 3 * T
+            x = np.concatenate(window, axis=2) / 255.
+            x = x.transpose(2, 0, 1)
+            x = x[:, x.shape[1]//2:]
+
+            x = torch.FloatTensor(x)
+            mel = torch.FloatTensor(mel.T).unsqueeze(0)
+
+            return x, mel, y, os.path.relpath(vidname, self.data_root)
+
+
+logloss = nn.BCELoss(reduction='none')
+
+
+def cosine_loss(a, v, y):
+    d = nn.functional.cosine_similarity(a, v)
+    loss = logloss(d.unsqueeze(1), y)
+
+    return loss
+
+def evaluate_datasets_losses(syncnet_checkpoint_path, img_size, data_root, epochs=5):
+    hp.set_hparam('img_size', img_size)
+    device = 'cuda:0'
+    sync_model = SyncNet().to(device)
+    checkpoint = torch.load(syncnet_checkpoint_path)
+    sync_model.load_state_dict(checkpoint["state_dict"])
+    test_dataset = SyncnetDataset(data_root)
+    data_loader = data_utils.DataLoader(
+        test_dataset, batch_size=hp.syncnet_batch_size,
+        num_workers=hp.num_workers)
+
+    sync_model.eval()
+    losses = {}
+    with torch.no_grad():
+        for epoch in range(epochs):
+            for x, mel, y, vidnames in tqdm(data_loader, desc="[epoch {}] evaluate sync loss".format(epoch)):
+                for vidname in vidnames:
+                    if vidname not in losses:
+                        losses[vidname] = []
+                x = x.to(device)
+                mel = mel.to(device)
+                a, v = sync_model(mel, x)
+                y = y.to(device)
+                loss = cosine_loss(a, v, y)[:, 0].to('cpu').numpy()
+                for vidname, l in zip(vidnames, loss):
+                    losses[vidname].append(l)
+    stat_losses = {}
+    for vidname, loss in losses.items():
+        stat_losses[vidname] = (np.mean(losses[vidname]),
+                                np.std(losses[vidname]))
+    return stat_losses
 
 
 def main(args):
     assert os.path.exists(args.data_root)
     assert args.train_ratio < 1.0
     assert args.train_ratio > 0.0
+
+    valid_vidnames = set()
+    if args.syncnet_checkpoint_path is not None:
+        stat_losses = evaluate_datasets_losses(
+            args.syncnet_checkpoint_path,
+            args.syncnet_img_size,
+            args.data_root,
+            args.cosine_loss_epoch,
+        )
+        for vidname, (mean_loss, std_loss) in stat_losses.items():
+            if mean_loss < args.cosine_loss_mean_max and std_loss < args.cosine_loss_std_max:
+                valid_vidnames.add(vidname)
 
     i_train = 0
     i_val = 0
@@ -24,6 +203,9 @@ def main(args):
         dirpath = os.path.join(args.data_root, dirname)
         for dataname in os.listdir(dirpath):
             line = os.path.join(dirname, dataname)
+            if args.syncnet_checkpoint_path is not None:
+                if line not in valid_vidnames:
+                    continue
             if np.random.rand() < args.train_ratio:
                 train_lines.append(line)
             else:

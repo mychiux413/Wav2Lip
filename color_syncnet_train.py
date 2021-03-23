@@ -16,6 +16,7 @@ from glob import glob
 import os, random, cv2, argparse
 from hparams import hparams, get_image_list
 from data import Dataset
+from radam import RAdam
 
 parser = argparse.ArgumentParser(description='Code to train the expert lip-sync discriminator')
 
@@ -23,6 +24,8 @@ parser.add_argument("--data_root", help="Root folder of the preprocessed LRS2 da
 
 parser.add_argument('--checkpoint_dir', help='Save checkpoints to this directory', required=True, type=str)
 parser.add_argument('--checkpoint_path', help='Resumed from this checkpoint', default=None, type=str)
+parser.add_argument('--train_limit', type=int, required=False, default=0)
+parser.add_argument('--val_limit', type=int, required=False, default=0)
 
 args = parser.parse_args()
 
@@ -36,9 +39,7 @@ class SyncnetDataset(Dataset):
 
     def __getitem__(self, idx):
         while 1:
-            idx = random.randint(0, len(self.all_videos) - 1)
-            vidname = self.all_videos[idx]
-
+            vidname = self.get_vidname(idx)
             img_names = self.img_names[vidname]
             if len(img_names) <= 3 * self.syncnet_T:
                 continue
@@ -211,15 +212,15 @@ if __name__ == "__main__":
     if not os.path.exists(checkpoint_dir): os.mkdir(checkpoint_dir)
 
     # Dataset and Dataloader setup
-    train_dataset = SyncnetDataset('train', args.data_root)
-    test_dataset = SyncnetDataset('val', args.data_root)
+    train_dataset = SyncnetDataset('train', args.data_root, limit=args.train_limit)
+    val_dataset = SyncnetDataset('val', args.data_root, limit=args.val_limit)
 
     train_data_loader = data_utils.DataLoader(
         train_dataset, batch_size=hparams.syncnet_batch_size,
         num_workers=hparams.num_workers)
 
-    test_data_loader = data_utils.DataLoader(
-        test_dataset, batch_size=hparams.syncnet_batch_size,
+    val_data_loader = data_utils.DataLoader(
+        val_dataset, batch_size=hparams.syncnet_batch_size,
         num_workers=8)
 
     device = torch.device("cuda" if use_cuda else "cpu")
@@ -229,13 +230,13 @@ if __name__ == "__main__":
     print('total trainable params {}'.format(sum(p.numel() for p in model.parameters() if p.requires_grad)))
 
     optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad],
-                           lr=hparams.syncnet_lr)
+                           lr=hparams.syncnet_lr, amsgrad=True)
 
     if checkpoint_path is not None:
         load_checkpoint(checkpoint_path, model, optimizer, reset_optimizer=False)
 
     model = nn.DataParallel(model)
-    train(device, model, train_data_loader, test_data_loader, optimizer,
+    train(device, model, train_data_loader, val_data_loader, optimizer,
           checkpoint_dir=checkpoint_dir,
           checkpoint_interval=hparams.syncnet_checkpoint_interval,
           nepochs=hparams.nepochs)

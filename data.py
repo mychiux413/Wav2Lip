@@ -21,8 +21,8 @@ class Dataset(object):
     syncnet_T = hparams.syncnet_T
     syncnet_mel_step_size = hparams.syncnet_mel_step_size
 
-    def __init__(self, split, data_root):
-        self.all_videos = get_image_list(data_root, split)
+    def __init__(self, split, data_root, inner_shuffle=True, limit=-1):
+        self.all_videos = get_image_list(data_root, split, limit=limit)
         self.img_names = {
             vidname: list(glob(join(vidname, '*.png'))) for vidname in self.all_videos
         }
@@ -45,6 +45,18 @@ class Dataset(object):
                 np.save(mel_path, orig_mel)
             self.orig_mels[vidname] = orig_mel
         self.data_root = data_root
+        self.inner_shuffle = inner_shuffle
+        self.all_videos_p = None
+        self.linear_space = np.array(range(len(self.all_videos)))
+        if inner_shuffle:
+            imgs_counts = [len(self.img_names[vidname]) for vidname in self.all_videos]
+            self.all_videos_p = np.array(imgs_counts) / np.sum(imgs_counts)
+
+
+    def get_vidname(self, idx):
+        if self.inner_shuffle:
+            idx = np.random.choice(self.linear_space, p=self.all_videos_p)
+        return self.all_videos[idx]
 
     def get_frame_id(self, frame):
         return int(basename(frame).split('.')[0])
@@ -113,4 +125,6 @@ class Dataset(object):
 
 
     def __len__(self):
-        return sum([len(self.img_names[vid]) for vid in self.all_videos])
+        if not self.inner_shuffle:
+            return len(self.all_videos)
+        return sum([len(names) for _, names in self.img_names.items()])
