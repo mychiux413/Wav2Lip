@@ -229,8 +229,13 @@ if __name__ == "__main__":
     model = SyncNet().to(device)
     print('total trainable params {}'.format(sum(p.numel() for p in model.parameters() if p.requires_grad)))
 
-    optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad],
-                           lr=hparams.syncnet_lr, amsgrad=True)
+    optimizer = optim.Adam(
+        [p for p in model.parameters() if p.requires_grad],
+        lr=hparams.syncnet_lr,
+        amsgrad=hparams.syncnet_opt_amsgrad,
+        weight_decay=hparams.syncnet_opt_weight_decay,
+    )
+
 
     if checkpoint_path is not None:
         load_checkpoint(checkpoint_path, model, optimizer, reset_optimizer=False)
