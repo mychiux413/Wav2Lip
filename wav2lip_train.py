@@ -16,7 +16,7 @@ from glob import glob
 
 import os, random, cv2, argparse
 from hparams import hparams, get_image_list
-from data import Dataset
+from data import Wav2LipDataset
 
 parser = argparse.ArgumentParser(description='Code to train the Wav2Lip model without the visual quality discriminator')
 
@@ -35,54 +35,6 @@ global_epoch = 0
 use_cuda = torch.cuda.is_available()
 print('use_cuda: {}'.format(use_cuda))
 
-class Wav2LipDataset(Dataset):
-
-    def __getitem__(self, idx):
-        while 1:
-            vidname = self.get_vidname(idx)
-            img_names = self.img_names[vidname]
-            if len(img_names) <= 3 * self.syncnet_T:
-                continue
-            
-            img_name = random.choice(img_names)
-            wrong_img_name = random.choice(img_names)
-            while wrong_img_name == img_name:
-                wrong_img_name = random.choice(img_names)
-
-            window_fnames = self.get_window(img_name)
-            wrong_window_fnames = self.get_window(wrong_img_name)
-            if window_fnames is None or wrong_window_fnames is None:
-                continue
-
-            window = self.read_window(window_fnames)
-            if window is None:
-                continue
-
-            wrong_window = self.read_window(wrong_window_fnames)
-            if wrong_window is None:
-                continue
-
-            orig_mel = self.orig_mels[vidname]
-            mel = self.crop_audio_window(orig_mel.copy(), img_name)
-            
-            if (mel.shape[0] != self.syncnet_mel_step_size):
-                continue
-
-            indiv_mels = self.get_segmented_mels(orig_mel.copy(), img_name)
-            if indiv_mels is None: continue
-
-            window = self.prepare_window(window)
-            y = window.copy()
-            window[:, :, window.shape[2]//2:] = 0.
-
-            wrong_window = self.prepare_window(wrong_window)
-            x = np.concatenate([window, wrong_window], axis=0)
-
-            x = torch.FloatTensor(x)
-            mel = torch.FloatTensor(mel.T).unsqueeze(0)
-            indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)
-            y = torch.FloatTensor(y)
-            return x, indiv_mels, mel, y
 
 def save_sample_images(x, g, gt, global_step, checkpoint_dir):
     x = (x.detach().cpu().numpy().transpose(0, 2, 3, 4, 1) * 255.).astype(np.uint8)

@@ -17,7 +17,7 @@ from glob import glob
 
 import os, random, cv2, argparse
 from hparams import hparams, get_image_list
-from wav2lip_train import Wav2LipDataset
+from data import Wav2LipDataset
 
 parser = argparse.ArgumentParser(description='Code to train the Wav2Lip model WITH the visual quality discriminator')
 

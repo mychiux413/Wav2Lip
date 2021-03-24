@@ -15,8 +15,7 @@ from glob import glob
 
 import os, random, cv2, argparse
 from hparams import hparams, get_image_list
-from data import Dataset
-from radam import RAdam
+from data import SyncnetDataset
 
 parser = argparse.ArgumentParser(description='Code to train the expert lip-sync discriminator')
 
@@ -34,63 +33,6 @@ global_step = 0
 global_epoch = 0
 use_cuda = torch.cuda.is_available()
 print('use_cuda: {}'.format(use_cuda))
-
-class SyncnetDataset(Dataset):
-
-    def __getitem__(self, idx):
-        while 1:
-            vidname = self.get_vidname(idx)
-            img_names = self.img_names[vidname]
-            if len(img_names) <= 3 * self.syncnet_T:
-                continue
-            img_name = random.choice(img_names)
-            wrong_img_name = random.choice(img_names)
-            while wrong_img_name == img_name:
-                wrong_img_name = random.choice(img_names)
-
-            if random.choice([True, False]):
-                y = torch.ones(1).float()
-                chosen = img_name
-            else:
-                y = torch.zeros(1).float()
-                chosen = wrong_img_name
-
-            window_fnames = self.get_window(chosen)
-            if window_fnames is None:
-                continue
-
-            window = []
-            all_read = True
-            for fname in window_fnames:
-                img = cv2.imread(fname)
-                if img is None:
-                    all_read = False
-                    break
-                try:
-                    img = cv2.resize(img, (hparams.img_size, hparams.img_size))
-                except Exception as e:
-                    all_read = False
-                    break
-
-                window.append(img)
-
-            if not all_read: continue
-
-            orig_mel = self.orig_mels[vidname]
-            mel = self.crop_audio_window(orig_mel.copy(), img_name)
-
-            if (mel.shape[0] != self.syncnet_mel_step_size):
-                continue
-
-            # H x W x 3 * T
-            x = np.concatenate(window, axis=2) / 255.
-            x = x.transpose(2, 0, 1)
-            x = x[:, x.shape[1]//2:]
-
-            x = torch.FloatTensor(x)
-            mel = torch.FloatTensor(mel.T).unsqueeze(0)
-
-            return x, mel, y
 
 logloss = nn.BCELoss()
 def cosine_loss(a, v, y):
