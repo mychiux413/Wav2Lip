@@ -81,6 +81,8 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
         running_sync_loss, running_l1_loss = 0., 0.
         prog_bar = tqdm(enumerate(train_data_loader))
         for step, (x, indiv_mels, mel, gt) in prog_bar:
+            if x.size(0) == 1:
+                continue
             model.train()
             optimizer.zero_grad()
 
@@ -140,6 +142,8 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
     while 1:
         for x, indiv_mels, mel, gt in test_data_loader:
             step += 1
+            if x.size(0) == 1:
+                continue
             model.eval()
 
             # Move data to CUDA device

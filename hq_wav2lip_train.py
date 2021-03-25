@@ -83,6 +83,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
         running_disc_real_loss, running_disc_fake_loss = 0., 0.
         prog_bar = tqdm(enumerate(train_data_loader))
         for step, (x, indiv_mels, mel, gt) in prog_bar:
+            if x.size(0) == 1:
+                continue
             disc.train()
             model.train()
 
@@ -176,6 +178,8 @@ def eval_model(test_data_loader, global_step, device, model, disc):
     running_sync_loss, running_l1_loss, running_disc_real_loss, running_disc_fake_loss, running_perceptual_loss = [], [], [], [], []
     while 1:
         for step, (x, indiv_mels, mel, gt) in enumerate((test_data_loader)):
+            if x.size(0) == 1:
+                continue
             model.eval()
             disc.eval()
 

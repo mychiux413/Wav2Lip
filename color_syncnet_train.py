@@ -51,6 +51,9 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
         running_loss = 0.
         prog_bar = tqdm(enumerate(train_data_loader))
         for step, (x, mel, y) in prog_bar:
+            if x.size(0) == 1:
+                continue
+
             model.train()
             optimizer.zero_grad()
 
@@ -88,6 +91,8 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
     losses = []
     while 1:
         for step, (x, mel, y) in enumerate(test_data_loader):
+            if x.size(0) == 1:
+                continue
 
             model.eval()
 
