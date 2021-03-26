@@ -8,6 +8,8 @@ import torch, face_detection
 from models import Wav2Lip
 import platform
 from hparams import hparams as hp
+from utils.face_detect import detect_and_dump_image, detect_and_dump, stream_from_face_config
+import shutil
 
 parser = argparse.ArgumentParser(description='Inference code to lip-sync videos in the wild using Wav2Lip models')
 
@@ -30,7 +32,7 @@ parser.add_argument('--pads', nargs='+', type=int, default=[0, 10, 0, 0],
 					help='Padding (top, bottom, left, right). Please adjust to include chin at least')
 
 parser.add_argument('--face_det_batch_size', type=int, 
-					help='Batch size for face detection', default=16)
+					help='Batch size for face detection', default=2)
 parser.add_argument('--wav2lip_batch_size', type=int, help='Batch size for Wav2Lip model(s)', default=128)
 
 parser.add_argument('--resize_factor', default=1, type=int, 
@@ -50,6 +52,7 @@ parser.add_argument('--rotate', default=False, action='store_true',
 
 parser.add_argument('--nosmooth', default=False, action='store_true',
 					help='Prevent smoothing face detections over a short temporal window')
+parser.add_argument('--smooth_size', default=5, type=int, help='Specify the smooth size')
 
 args = parser.parse_args()
 args.img_size = hp.img_size
@@ -106,26 +109,19 @@ def face_detect(images):
 	del detector
 	return results 
 
-def datagen(frames, mels):
+def datagen(vidpath, mels):
 	img_batch, mel_batch, frame_batch, coords_batch = [], [], [], []
+	temp_face_dir = "temp/face_dump"
 
-	if args.box[0] == -1:
-		if not args.static:
-			face_det_results = face_detect(frames) # BGR2RGB for CNN face detection
-		else:
-			face_det_results = face_detect([frames[0]])
+	if args.static:
+		config_path = detect_and_dump_image(vidpath, temp_face_dir, device, hp.img_size, pads=args.pads, box=args.box)
 	else:
-		print('Using the specified bounding box instead of face detection...')
-		y1, y2, x1, x2 = args.box
-		face_det_results = [[f[y1: y2, x1:x2], (y1, y2, x1, x2)] for f in frames]
+		config_path = detect_and_dump(vidpath, temp_face_dir, device, hp.img_size, args.face_det_batch_size,
+		pads=args.pads, box=args.box, smooth=not args.nosmooth, smooth_size=args.smooth_size)
+	stream = stream_from_face_config(config_path, infinite_loop=True)
 
 	for i, m in enumerate(mels):
-		idx = 0 if args.static else i%len(frames)
-		frame_to_save = frames[idx].copy()
-		face, coords = face_det_results[idx].copy()
-
-		face = cv2.resize(face, (args.img_size, args.img_size))
-			
+		frame_to_save, face, coords = next(stream)			
 		img_batch.append(face)
 		mel_batch.append(m)
 		frame_batch.append(frame_to_save)
@@ -153,6 +149,7 @@ def datagen(frames, mels):
 		mel_batch = np.reshape(mel_batch, [len(mel_batch), mel_batch.shape[1], mel_batch.shape[2], 1])
 
 		yield img_batch, mel_batch, frame_batch, coords_batch
+	shutil.rmtree(temp_face_dir)
 
 mel_step_size = hp.syncnet_mel_step_size
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -184,36 +181,12 @@ def main():
 		raise ValueError('--face argument must be a valid path to video/image file')
 
 	elif args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
-		full_frames = [cv2.imread(args.face)]
 		fps = args.fps
 
 	else:
 		video_stream = cv2.VideoCapture(args.face)
 		fps = video_stream.get(cv2.CAP_PROP_FPS)
-
-		print('Reading video frames...')
-
-		full_frames = []
-		while 1:
-			still_reading, frame = video_stream.read()
-			if not still_reading:
-				video_stream.release()
-				break
-			if args.resize_factor > 1:
-				frame = cv2.resize(frame, (frame.shape[1]//args.resize_factor, frame.shape[0]//args.resize_factor))
-
-			if args.rotate:
-				frame = cv2.rotate(frame, cv2.cv2.ROTATE_90_CLOCKWISE)
-
-			y1, y2, x1, x2 = args.crop
-			if x2 == -1: x2 = frame.shape[1]
-			if y2 == -1: y2 = frame.shape[0]
-
-			frame = frame[y1:y2, x1:x2]
-
-			full_frames.append(frame)
-
-	print ("Number of frames available for inference: "+str(len(full_frames)))
+		video_stream.release()
 
 	if not args.audio.endswith('.wav'):
 		print('Extracting raw audio...')
@@ -241,11 +214,8 @@ def main():
 		i += 1
 
 	print("Length of mel chunks: {}".format(len(mel_chunks)))
-
-	full_frames = full_frames[:len(mel_chunks)]
-
 	batch_size = args.wav2lip_batch_size
-	gen = datagen(full_frames.copy(), mel_chunks)
+	gen = datagen(args.face, mel_chunks)
 
 	for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, 
 											total=int(np.ceil(float(len(mel_chunks))/batch_size)))):
@@ -253,7 +223,7 @@ def main():
 			model = load_model(args.checkpoint_path)
 			print ("Model loaded")
 
-			frame_h, frame_w = full_frames[0].shape[:-1]
+			frame_h, frame_w = frames[0].shape[:-1]
 			out = cv2.VideoWriter(
 				'temp/result.avi', 
 				cv2.VideoWriter_fourcc(*'FFV1'), fps, (frame_w, frame_h))
@@ -269,7 +239,6 @@ def main():
 		for p, f, c in zip(pred, frames, coords):
 			y1, y2, x1, x2 = c
 			p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
-
 			f[y1:y2, x1:x2] = p
 			out.write(f)
 
