@@ -34,25 +34,31 @@ args = parser.parse_args()
 
 
 class SyncnetDataset(Dataset):
-    def __init__(self, data_root):
+    def __init__(self, data_root, sampling_half_window_size_seconds=2.0):
         self.all_videos = []
         for dirname in os.listdir(data_root):
             dirpath = os.path.join(data_root, dirname)
+            if not os.path.isdir(dirpath):
+                continue
             for vid_dirname in os.listdir(dirpath):
                 video_path = os.path.join(dirpath, vid_dirname)
+                wavpath = os.path.join(video_path, "audio.wav")
+                if len(os.listdir(video_path)) < 3 * hp.syncnet_T + 2:
+                    print("insufficient files of dir:", vid_dirname)
+                    continue
+                if not os.path.exists(wavpath):
+                    print("skip missing audio of:", vid_dirname)
+                    continue
                 self.all_videos.append(video_path)
 
         self.img_names = {
-            vidname: list(glob(os.path.join(vidname, '*.png'))) for vidname in self.all_videos
+            vidname: sorted(glob(os.path.join(vidname, '*.png')), key=lambda name: int(os.path.basename(name).split('.')[0])) for vidname in self.all_videos
         }
 
         self.orig_mels = {}
         for vidname in tqdm(self.all_videos, desc="load mels"):
             mel_path = os.path.join(vidname, "mel.npy")
             wavpath = os.path.join(vidname, "audio.wav")
-            assert os.path.exists(wavpath), "audio.wav not found at vidname: {}".format(
-                vidname
-            )
             if os.path.exists(mel_path):
                 try:
                     orig_mel = np.load(mel_path)
@@ -68,6 +74,7 @@ class SyncnetDataset(Dataset):
             self.orig_mels[vidname] = orig_mel
         self.data_root = data_root
         self.inner_shuffle = False
+        self.sampling_half_window_size_seconds = sampling_half_window_size_seconds
 
     def __getitem__(self, idx):
         while 1:
@@ -78,8 +85,9 @@ class SyncnetDataset(Dataset):
                 idx += 1
                 idx %= len(self)
                 continue
-            img_name = random.choice(img_names)
-            wrong_img_name = random.choice(img_names)
+
+            img_name, wrong_img_name = self.sample_right_wrong_images(img_names)
+
             while wrong_img_name == img_name:
                 wrong_img_name = random.choice(img_names)
 
@@ -146,15 +154,37 @@ def cosine_loss(a, v, y):
     return loss
 
 def evaluate_datasets_losses(syncnet_checkpoint_path, img_size, data_root, epochs=5):
+
+    sync_losses_path = os.path.join(data_root, "synclosses.npy")
+
+    # **** load cache file of synclosses or bypass ****
+    if os.path.exists(sync_losses_path):
+        try:
+            print("load cache file of synclosses losses:", sync_losses_path)
+            losses = np.load(sync_losses_path, allow_pickle=True).tolist()
+            
+            epochs_in_losses = max([len(v) for v in losses.values()])
+            if epochs_in_losses >= epochs:
+                stat_losses = {}
+                for vidname, loss in losses.items():
+                    stat_losses[vidname] = (np.mean(losses[vidname]),
+                                            np.std(losses[vidname]))
+                return stat_losses
+        except Exception as err:
+            print(err)
+    # *****************************************
+
     hp.set_hparam('img_size', img_size)
     device = 'cuda:0'
     sync_model = SyncNet().to(device)
     checkpoint = torch.load(syncnet_checkpoint_path)
     sync_model.load_state_dict(checkpoint["state_dict"])
-    test_dataset = SyncnetDataset(data_root)
+    test_dataset = SyncnetDataset(data_root,
+        sampling_half_window_size_seconds=hp.sampling_half_window_size_seconds)
     data_loader = data_utils.DataLoader(
         test_dataset, batch_size=hp.syncnet_batch_size,
-        num_workers=hp.num_workers)
+        num_workers=hp.num_workers,
+        persistent_workers=True)
 
     sync_model.eval()
     losses = {}
@@ -171,6 +201,8 @@ def evaluate_datasets_losses(syncnet_checkpoint_path, img_size, data_root, epoch
                 loss = cosine_loss(a, v, y)[:, 0].to('cpu').numpy()
                 for vidname, l in zip(vidnames, loss):
                     losses[vidname].append(l)
+    np.save(sync_losses_path, losses, allow_pickle=True)
+
     stat_losses = {}
     for vidname, loss in losses.items():
         stat_losses[vidname] = (np.mean(losses[vidname]),
@@ -201,6 +233,8 @@ def main(args):
     val_lines = []
     for dirname in os.listdir(args.data_root):
         dirpath = os.path.join(args.data_root, dirname)
+        if not os.path.isdir(dirpath):
+            continue
         for dataname in os.listdir(dirpath):
             line = os.path.join(dirname, dataname)
             if args.syncnet_checkpoint_path is not None:
