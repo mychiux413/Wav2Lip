@@ -216,8 +216,12 @@ if __name__ == "__main__":
     checkpoint_dir = args.checkpoint_dir
 
     # Dataset and Dataloader setup
-    train_dataset = Wav2LipDataset('train', args.data_root)
-    test_dataset = Wav2LipDataset('val', args.data_root)
+    train_dataset = Wav2LipDataset('train', args.data_root,
+        sampling_half_window_size_seconds=hparams.sampling_half_window_size_seconds,
+        unmask_fringe_width=hparams.unmask_fringe_width)
+    test_dataset = Wav2LipDataset('val', args.data_root,
+        sampling_half_window_size_seconds=hparams.sampling_half_window_size_seconds,
+        unmask_fringe_width=hparams.unmask_fringe_width)
 
     train_data_loader = data_utils.DataLoader(
         train_dataset, batch_size=hparams.batch_size,

@@ -13,16 +13,23 @@ import numpy as np
 
 from glob import glob
 
-import os, random, cv2, argparse
+import os
+import random
+import cv2
+import argparse
 from hparams import hparams, get_image_list
 from data import SyncnetDataset
 
-parser = argparse.ArgumentParser(description='Code to train the expert lip-sync discriminator')
+parser = argparse.ArgumentParser(
+    description='Code to train the expert lip-sync discriminator')
 
-parser.add_argument("--data_root", help="Root folder of the preprocessed LRS2 dataset", required=True)
+parser.add_argument(
+    "--data_root", help="Root folder of the preprocessed LRS2 dataset", required=True)
 
-parser.add_argument('--checkpoint_dir', help='Save checkpoints to this directory', required=True, type=str)
-parser.add_argument('--checkpoint_path', help='Resumed from this checkpoint', default=None, type=str)
+parser.add_argument('--checkpoint_dir',
+                    help='Save checkpoints to this directory', required=True, type=str)
+parser.add_argument('--checkpoint_path',
+                    help='Resumed from this checkpoint', default=None, type=str)
 parser.add_argument('--train_limit', type=int, required=False, default=0)
 parser.add_argument('--val_limit', type=int, required=False, default=0)
 
@@ -35,18 +42,21 @@ use_cuda = torch.cuda.is_available()
 print('use_cuda: {}'.format(use_cuda))
 
 logloss = nn.BCELoss()
+
+
 def cosine_loss(a, v, y):
     d = nn.functional.cosine_similarity(a, v)
     loss = logloss(d.unsqueeze(1), y)
 
     return loss
 
+
 def train(device, model, train_data_loader, test_data_loader, optimizer,
           checkpoint_dir=None, checkpoint_interval=None, nepochs=None):
 
     global global_step, global_epoch
     resumed_step = global_step
-    
+
     while global_epoch < nepochs:
         running_loss = 0.
         prog_bar = tqdm(enumerate(train_data_loader))
@@ -79,11 +89,14 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
 
             if global_step % hparams.syncnet_eval_interval == 0:
                 with torch.no_grad():
-                    eval_model(test_data_loader, global_step, device, model, checkpoint_dir)
+                    eval_model(test_data_loader, global_step,
+                               device, model, checkpoint_dir)
 
-            prog_bar.set_description('Loss: {}'.format(running_loss / (step + 1)))
+            prog_bar.set_description(
+                'Loss: {}'.format(running_loss / (step + 1)))
 
         global_epoch += 1
+
 
 def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
     eval_steps = 1400
@@ -107,12 +120,14 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
             loss = cosine_loss(a, v, y)
             losses.append(loss.item())
 
-            if step > eval_steps: break
+            if step > eval_steps:
+                break
 
         averaged_loss = sum(losses) / len(losses)
         print(averaged_loss)
 
         return
+
 
 def save_checkpoint(model, optimizer, step, checkpoint_dir, epoch):
 
@@ -127,6 +142,7 @@ def save_checkpoint(model, optimizer, step, checkpoint_dir, epoch):
     }, checkpoint_path)
     print("Saved checkpoint:", checkpoint_path)
 
+
 def _load(checkpoint_path):
     if use_cuda:
         checkpoint = torch.load(checkpoint_path)
@@ -134,6 +150,7 @@ def _load(checkpoint_path):
         checkpoint = torch.load(checkpoint_path,
                                 map_location=lambda storage, loc: storage)
     return checkpoint
+
 
 def load_checkpoint(path, model, optimizer, reset_optimizer=False):
     global global_step
@@ -152,15 +169,19 @@ def load_checkpoint(path, model, optimizer, reset_optimizer=False):
 
     return model
 
+
 if __name__ == "__main__":
     checkpoint_dir = args.checkpoint_dir
     checkpoint_path = args.checkpoint_path
 
-    if not os.path.exists(checkpoint_dir): os.mkdir(checkpoint_dir)
+    if not os.path.exists(checkpoint_dir):
+        os.mkdir(checkpoint_dir)
 
     # Dataset and Dataloader setup
-    train_dataset = SyncnetDataset('train', args.data_root, limit=args.train_limit)
-    val_dataset = SyncnetDataset('val', args.data_root, limit=args.val_limit)
+    train_dataset = SyncnetDataset('train', args.data_root, limit=args.train_limit,
+                                   sampling_half_window_size_seconds=1e10)
+    val_dataset = SyncnetDataset('val', args.data_root, limit=args.val_limit,
+                                 sampling_half_window_size_seconds=1e10)
 
     train_data_loader = data_utils.DataLoader(
         train_dataset, batch_size=hparams.syncnet_batch_size,
@@ -174,7 +195,8 @@ if __name__ == "__main__":
 
     # Model
     model = SyncNet().to(device)
-    print('total trainable params {}'.format(sum(p.numel() for p in model.parameters() if p.requires_grad)))
+    print('total trainable params {}'.format(sum(p.numel()
+          for p in model.parameters() if p.requires_grad)))
 
     optimizer = optim.Adam(
         [p for p in model.parameters() if p.requires_grad],
@@ -183,9 +205,9 @@ if __name__ == "__main__":
         weight_decay=hparams.syncnet_opt_weight_decay,
     )
 
-
     if checkpoint_path is not None:
-        load_checkpoint(checkpoint_path, model, optimizer, reset_optimizer=False)
+        load_checkpoint(checkpoint_path, model,
+                        optimizer, reset_optimizer=False)
 
     model = nn.DataParallel(model)
     train(device, model, train_data_loader, val_data_loader, optimizer,
