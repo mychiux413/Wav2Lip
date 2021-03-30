@@ -6,6 +6,8 @@ from utils.stream import stream_video_as_batch, get_video_fps_and_frame_count
 import pandas as pd
 from tqdm import tqdm
 import numpy as np
+from torch.utils import data as data_utils
+from hparams import hparams
 
 
 class Smoothier:
@@ -151,6 +153,20 @@ def detect_and_dump(vidpath, dump_dir, device, face_size, face_detect_batch_size
     df.to_csv(face_config_path, sep='\t', index=None)
     return face_config_path
 
+def FaceDataset(object):
+    def __init__(self, config_path):
+        self.config = pd.read_csv(config_path, sep='\t')
+        print("{} faces".format(len(self.config)))
+
+    def __len__(self):
+        return len(self.config)
+    def __getitem__(self, idx):
+        row = self.config.iloc[idx]
+        img = cv2.imread(row['img_path'])
+        if row['face_path']:
+            face = cv2.imread(row['face_path'])
+        x1, x2, y1, y2 = (row['x1'], row['x2'], row['y1'], row['y2'])
+        return img, face, (y1, y2, x1, x2)
 
 def stream_from_face_config(config_path, infinite_loop=False):
     config = pd.read_csv(config_path, sep='\t')

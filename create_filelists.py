@@ -22,9 +22,9 @@ parser.add_argument('--val_limit', type=int, required=False, default=0)
 parser.add_argument("--syncnet_checkpoint_path",
                     help='Load the pre-trained Expert discriminator', required=False, default=None)
 parser.add_argument('--cosine_loss_mean_max',
-                    help='Pass the loss of datasets under specified mean value', default=1.9, type=float)
+                    help='Pass the loss of datasets under specified mean value', default=4.75, type=float)
 parser.add_argument('--cosine_loss_std_max',
-                    help='Pass the loss of datasets under specified std value', default=3.0, type=float)
+                    help='Pass the loss of datasets under specified std value', default=3.5, type=float)
 parser.add_argument('--cosine_loss_epoch',
                     help='Specify the epoch to evaluate cosine loss', default=10, type=int)
 parser.add_argument('--syncnet_img_size',
@@ -34,7 +34,7 @@ args = parser.parse_args()
 
 
 class SyncnetDataset(Dataset):
-    def __init__(self, data_root, sampling_half_window_size_seconds=2.0):
+    def __init__(self, data_root, only_true_image=True):
         self.all_videos = []
         for dirname in os.listdir(data_root):
             dirpath = os.path.join(data_root, dirname)
@@ -74,7 +74,10 @@ class SyncnetDataset(Dataset):
             self.orig_mels[vidname] = orig_mel
         self.data_root = data_root
         self.inner_shuffle = False
-        self.sampling_half_window_size_seconds = sampling_half_window_size_seconds
+        self.sampling_half_window_size_seconds = 1e10
+
+        # 實驗發現, 只要是wrong image, model的分辨能力都很好, 因此不需要sampling wrong image
+        self.only_true_image = only_true_image
 
     def __getitem__(self, idx):
         while 1:
@@ -91,7 +94,7 @@ class SyncnetDataset(Dataset):
             while wrong_img_name == img_name:
                 wrong_img_name = random.choice(img_names)
 
-            if random.choice([True, False]):
+            if self.only_true_image or random.choice([True, False]):
                 y = torch.ones(1).float()
                 chosen = img_name
             else:
@@ -179,8 +182,7 @@ def evaluate_datasets_losses(syncnet_checkpoint_path, img_size, data_root, epoch
     sync_model = SyncNet().to(device)
     checkpoint = torch.load(syncnet_checkpoint_path)
     sync_model.load_state_dict(checkpoint["state_dict"])
-    test_dataset = SyncnetDataset(data_root,
-        sampling_half_window_size_seconds=hp.sampling_half_window_size_seconds)
+    test_dataset = SyncnetDataset(data_root, only_true_image=True)
     data_loader = data_utils.DataLoader(
         test_dataset, batch_size=hp.syncnet_batch_size,
         num_workers=hp.num_workers,

@@ -41,9 +41,9 @@ def process_video_file(vfile, args, gpu_id):
 	dirname = vfile.split('/')[-2]
 
 	fulldir = path.join(args.preprocessed_root, dirname, vidname)
-	if os.path.exists(fulldir) and len(os.listdir(fulldir)) > 0:
+	if os.path.exists(fulldir) and len(os.listdir(fulldir)) > 3 * hp.syncnet_T + 2:
 		return
-	os.makedirs(fulldir)
+	os.makedirs(fulldir, exist_ok=True)
 
 	n_pixels_1080p = 1920 * 1080
 
@@ -55,6 +55,9 @@ def process_video_file(vfile, args, gpu_id):
 
 	video_stream.release()
 
+	if n_pixels_of_video == 0:
+		print("invalid video: ", vidname)
+		return
 	batch_size = max(int(n_pixels_1080p / n_pixels_of_video * args.batch_size), 1)
 
 	batches = stream_video_as_batch(vfile, batch_size, steps=batch_size)
@@ -94,7 +97,8 @@ def mp_handler(job):
 		process_video_file(vfile, args, gpu_id)
 	except KeyboardInterrupt:
 		exit(0)
-	except:
+	except Exception as err:
+		print(err)
 		traceback.print_exc()
 		
 def main(args):

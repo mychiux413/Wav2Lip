@@ -25,16 +25,20 @@ class Dataset(object):
     syncnet_T = hparams.syncnet_T
     syncnet_mel_step_size = hparams.syncnet_mel_step_size
 
-    def __init__(self, split, data_root, inner_shuffle=True, limit=-1):
-        self.all_videos = get_image_list(data_root, split, limit=limit)
+    def __init__(self, split, data_root, inner_shuffle=True,
+        limit=-1, sampling_half_window_size_seconds=2.0,
+        unmask_fringe_width=10):
+        self.all_videos = list(filter(
+            lambda vidname: os.path.exists(join(vidname, "audio.wav")), get_image_list(data_root, split, limit=limit)))
         self.img_names = {
-            vidname: list(glob(join(vidname, '*.png'))) for vidname in self.all_videos
+            vidname: sorted(glob(join(vidname, '*.png')), key=lambda name: int(os.path.basename(name).split('.')[0])) for vidname in self.all_videos
         }
-
+        
         self.orig_mels = {}
         for vidname in tqdm(self.all_videos, desc="load mels"):
             mel_path = join(vidname, "mel.npy")
             wavpath = join(vidname, "audio.wav")
+            assert os.path.exists(wavpath), wavpath
             if os.path.exists(mel_path):
                 try:
                     orig_mel = np.load(mel_path)
@@ -56,6 +60,13 @@ class Dataset(object):
             imgs_counts = [len(self.img_names[vidname])
                            for vidname in self.all_videos]
             self.all_videos_p = np.array(imgs_counts) / np.sum(imgs_counts)
+        self.sampling_half_window_size_seconds = sampling_half_window_size_seconds
+        self.unmask_fringe_width = int(unmask_fringe_width)
+        self.fringe_x1 = self.unmask_fringe_width
+        self.fringe_x2 = hparams.img_size - self.unmask_fringe_width
+        assert self.fringe_x2 > self.fringe_x1
+        self.fringe_y2 = hparams.img_size - self.unmask_fringe_width
+        assert self.fringe_y2 > hparams.img_size // 2
 
     def get_vidname(self, idx):
         if self.inner_shuffle:
@@ -129,10 +140,27 @@ class Dataset(object):
 
         return x
 
+    def mask_window(self, window):
+        window[:, self.fringe_x1:self.fringe_x2, (window.shape[2]//2):self.fringe_y2] = 0.
+        return window
+
     def __len__(self):
         if not self.inner_shuffle:
             return len(self.all_videos)
         return sum([len(names) for _, names in self.img_names.items()])
+
+    def sample_right_wrong_images(self, img_names):
+        imgs_len = len(img_names)
+        img_idx = random.choice(range(imgs_len))
+        img_name = img_names[img_idx]
+
+        min_wrong_idx = max(
+            0, int(img_idx - hparams.fps * self.sampling_half_window_size_seconds))
+        max_wrong_idx = min(
+            imgs_len, int(img_idx + hparams.fps * self.sampling_half_window_size_seconds))
+        img_wrong_idx = random.choice(range(min_wrong_idx, max_wrong_idx))
+        wrong_img_name = img_names[img_wrong_idx]
+        return img_name, wrong_img_name
 
 
 class Wav2LipDataset(Dataset):
@@ -144,8 +172,8 @@ class Wav2LipDataset(Dataset):
             if len(img_names) <= 3 * self.syncnet_T:
                 continue
 
-            img_name = random.choice(img_names)
-            wrong_img_name = random.choice(img_names)
+            img_name, wrong_img_name = self.sample_right_wrong_images(img_names)
+
             while wrong_img_name == img_name:
                 wrong_img_name = random.choice(img_names)
 
@@ -174,7 +202,7 @@ class Wav2LipDataset(Dataset):
 
             window = self.prepare_window(window)
             y = window.copy()
-            window[:, :, window.shape[2]//2:] = 0.
+            window = self.mask_window(window)
 
             wrong_window = self.prepare_window(wrong_window)
             x = np.concatenate([window, wrong_window], axis=0)
@@ -194,8 +222,9 @@ class SyncnetDataset(Dataset):
             img_names = self.img_names[vidname]
             if len(img_names) <= 3 * self.syncnet_T:
                 continue
-            img_name = random.choice(img_names)
-            wrong_img_name = random.choice(img_names)
+
+            img_name, wrong_img_name = self.sample_right_wrong_images(img_names)
+
             while wrong_img_name == img_name:
                 wrong_img_name = random.choice(img_names)
 
