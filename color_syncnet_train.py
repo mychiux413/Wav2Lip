@@ -181,7 +181,8 @@ if __name__ == "__main__":
     train_dataset = SyncnetDataset('train', args.data_root, limit=args.train_limit,
                                    sampling_half_window_size_seconds=1e10)
     val_dataset = SyncnetDataset('val', args.data_root, limit=args.val_limit,
-                                 sampling_half_window_size_seconds=1e10)
+                                 sampling_half_window_size_seconds=1e10,
+                                 img_augment=False)
 
     train_data_loader = data_utils.DataLoader(
         train_dataset, batch_size=hparams.syncnet_batch_size,
