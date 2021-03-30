@@ -19,7 +19,13 @@ import cv2
 import argparse
 from hparams import hparams, get_image_list
 from tqdm import tqdm
+import torchvision
 
+augment = torchvision.transforms.Compose([
+    torchvision.transforms.RandomGrayscale(0.1),
+    torchvision.transforms.ColorJitter(brightness=(0.6, 1.4), contrast=(0.6, 1.4), saturation=(0.6, 1.4), hue=0),
+    torchvision.transforms.RandomHorizontalFlip(p=0.2),
+])
 
 class Dataset(object):
     syncnet_T = hparams.syncnet_T
@@ -27,7 +33,7 @@ class Dataset(object):
 
     def __init__(self, split, data_root, inner_shuffle=True,
         limit=-1, sampling_half_window_size_seconds=2.0,
-        unmask_fringe_width=10):
+        unmask_fringe_width=10, img_augment=True):
         self.all_videos = list(filter(
             lambda vidname: os.path.exists(join(vidname, "audio.wav")), get_image_list(data_root, split, limit=limit)))
         self.img_names = {
@@ -67,6 +73,7 @@ class Dataset(object):
         assert self.fringe_x2 > self.fringe_x1
         self.fringe_y2 = hparams.img_size - self.unmask_fringe_width
         assert self.fringe_y2 > hparams.img_size // 2
+        self.img_augment = img_augment
 
     def get_vidname(self, idx):
         if self.inner_shuffle:
@@ -133,15 +140,19 @@ class Dataset(object):
 
         return spec[start_idx: end_idx, :]
 
+    def augment_window(self, tensor):
+        # input size: T x 3 x H x W
+        return augment(tensor)
+
     def prepare_window(self, window):
-        # 3 x T x H x W
+        # output size: 3 x T x H x W
         x = np.asarray(window) / 255.
         x = np.transpose(x, (3, 0, 1, 2))
 
         return x
 
     def mask_window(self, window):
-        window[:, self.fringe_x1:self.fringe_x2, (window.shape[2]//2):self.fringe_y2] = 0.
+        window[:, :, (window.shape[2]//2):self.fringe_y2, self.fringe_x1:self.fringe_x2] = 0.
         return window
 
     def __len__(self):
@@ -200,17 +211,24 @@ class Wav2LipDataset(Dataset):
             if indiv_mels is None:
                 continue
 
-            window = self.prepare_window(window)
-            y = window.copy()
+            window = self.prepare_window(window) # 3 x T x H x W
+            wrong_window = self.prepare_window(wrong_window) # 3 x T x H x W
+            cat = np.concatenate([window, wrong_window], axis=1)
+            cat = torch.FloatTensor(cat)
+            if self.img_augment:
+                cat = cat.permute((1, 0, 2, 3))
+                cat = self.augment_window(cat)
+                cat = cat.permute((1, 0, 2, 3))
+
+            wrong_window = cat[:, self.syncnet_T:, :, :]
+            window = cat[:, :self.syncnet_T, :, :]
+            y = window.clone()
             window = self.mask_window(window)
 
-            wrong_window = self.prepare_window(wrong_window)
-            x = np.concatenate([window, wrong_window], axis=0)
+            x = torch.cat([window, wrong_window], axis=0)
 
-            x = torch.FloatTensor(x)
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
             indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)
-            y = torch.FloatTensor(y)
             return x, indiv_mels, mel, y
 
 
@@ -263,12 +281,14 @@ class SyncnetDataset(Dataset):
             if (mel.shape[0] != self.syncnet_mel_step_size):
                 continue
 
-            # H x W x 3 * T
-            x = np.concatenate(window, axis=2) / 255.
-            x = x.transpose(2, 0, 1)
-            x = x[:, x.shape[1]//2:]
-
-            x = torch.FloatTensor(x)
+            x = self.prepare_window(window) # 3 x T x H x W
+            x = x[:, :, x.shape[2]//2:]
+            x = np.transpose(x, (1, 0, 2, 3))
+            x = torch.FloatTensor(x) # T x 3 x H x W
+            if self.img_augment:
+                x = self.augment_window(x)
+            shape = x.shape
+            x = x.reshape((shape[0] * shape[1], shape[2], shape[3]))
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
 
             return x, mel, y
