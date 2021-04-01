@@ -1,6 +1,6 @@
 import cv2
-from hparams import hparams as hp
-import audio
+from w2l.hparams import hparams as hp
+from w2l.utils import audio
 import numpy as np
 
 

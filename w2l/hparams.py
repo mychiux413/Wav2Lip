@@ -23,6 +23,20 @@ class HParams:
 		for key, value in kwargs.items():
 			self.data[key] = value
 
+		# **** environ control ****
+		for key, value in self.data.items():
+			env_key = "W2L_" + key.upper()
+			value_from_env = os.environ.get(env_key)
+			if value_from_env is None:
+				continue
+			for tp in [bool, float, int, str]:
+				if isinstance(value, tp):
+					print("overwrite HParams from environ var: {}={}".format(
+						env_key, value_from_env))
+					self.data[key] = tp(value_from_env)
+					break
+		# *************************
+
 	def __getattr__(self, key):
 		if key not in self.data:
 			raise AttributeError("'HParams' object has no attribute %s" % key)
@@ -77,7 +91,7 @@ hparams = HParams(
 	fmax=7600,  # To be increased/reduced depending on data.
 
 	###################### Our training parameters #################################
-	img_size=192,  # 96 or 192
+	img_size=96,  # 96 or 192
 	fps=30,
 	
 	batch_size=8,
@@ -99,7 +113,7 @@ hparams = HParams(
 	syncnet_lr=5e-6,
 	syncnet_eval_interval=20000,
 	syncnet_checkpoint_interval=20000,
-	syncnet_T=6,
+	syncnet_T=5,
 	syncnet_mel_step_size=16,
 	syncnet_opt_amsgrad=True,
 	syncnet_opt_weight_decay=0.0,

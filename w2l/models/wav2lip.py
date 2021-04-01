@@ -2,11 +2,11 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 import math
-from hparams import hparams as hp
+from w2l.hparams import hparams as hp
 import numpy as np
 
-from .conv import Conv2dTranspose, Conv2d, nonorm_Conv2d, evaluate_conv_layers, evaluate_new_size_after_conv, create_audio_encoder
-from .conv import evaluate_new_size_after_transpose_conv
+from w2l.models.conv import Conv2dTranspose, Conv2d, nonorm_Conv2d, evaluate_conv_layers, evaluate_new_size_after_conv, create_audio_encoder
+from w2l.models.conv import evaluate_new_size_after_transpose_conv
 
 class Wav2Lip(nn.Module):
     def __init__(self):

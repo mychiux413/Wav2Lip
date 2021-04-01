@@ -1,13 +1,13 @@
-import torch
-import face_detection
-import cv2
 import os
-from utils.stream import stream_video_as_batch, get_video_fps_and_frame_count
+import torch
+import cv2
+from w2l.face_detection import FaceAlignment, LandmarksType
+from w2l.utils.stream import stream_video_as_batch, get_video_fps_and_frame_count
 import pandas as pd
 from tqdm import tqdm
 import numpy as np
 from torch.utils import data as data_utils
-from hparams import hparams
+from w2l.hparams import hparams
 
 
 class Smoothier:
@@ -28,7 +28,7 @@ class Smoothier:
         self.y2 = int(self.PREV_RATIO * self.y2 + self.AFTER_RATIO * y2)
         return self.x1, self.x2, self.y1, self.y2
 
-def detect_and_dump_image(img_path, dump_dir, device, face_size, pads=None, box=None):
+def detect_face_and_dump_from_image(img_path, dump_dir, device, face_size, fps=25, pads=None, box=None):
     if pads is None:
         pads = (0, 0, 0, 0)
     if box is None:
@@ -40,8 +40,8 @@ def detect_and_dump_image(img_path, dump_dir, device, face_size, pads=None, box=
     if box[0] != -1:
         pady1, pady2, padx1, padx2 = pads
         os.makedirs(dump_dir, exist_ok=True)
-        detector = face_detection.FaceAlignment(
-            face_detection.LandmarksType._2D,
+        detector = FaceAlignment(
+            LandmarksType._2D,
             flip_input=False, device=device)
         rect = detector.get_detections_for_batch(np.array([frame]))[0]
         assert rect is not None
@@ -66,18 +66,26 @@ def detect_and_dump_image(img_path, dump_dir, device, face_size, pads=None, box=
     face_config_path = os.path.join(dump_dir, "face.tsv")
     df = pd.DataFrame(rows)
     df.to_csv(face_config_path, sep='\t', index=None)
+
+    # **** add info info config ****
+    raw = open(face_config_path).read()
+    with open(face_config_path, 'w') as f:
+        f.write('# fps={}\n'.format(fps))
+        f.write(raw)
+    # ******************************
+
     return face_config_path
 
 
-def detect_and_dump(vidpath, dump_dir, device, face_size, face_detect_batch_size=2,
+def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_detect_batch_size=2,
                     pads=None, box=None, smooth=False, smooth_size=5):
     if pads is None:
         pads = (0, 0, 0, 0)
     if box is None:
         box = (-1, -1, -1, -1)
     os.makedirs(dump_dir, exist_ok=True)
-    detector = face_detection.FaceAlignment(
-        face_detection.LandmarksType._2D,
+    detector = FaceAlignment(
+        LandmarksType._2D,
         flip_input=False, device=device)
 
     i_image = 0
@@ -151,6 +159,17 @@ def detect_and_dump(vidpath, dump_dir, device, face_size, face_detect_batch_size
     face_config_path = os.path.join(dump_dir, "face.tsv")
     df = pd.DataFrame(rows)
     df.to_csv(face_config_path, sep='\t', index=None)
+
+    # **** add info info config ****
+    video_stream = cv2.VideoCapture(vidpath)
+    fps = video_stream.get(cv2.CAP_PROP_FPS)
+    video_stream.release()
+    raw = open(face_config_path).read()
+    with open(face_config_path, 'w') as f:
+        f.write('# fps={}\n'.format(int(fps)))
+        f.write(raw)
+    # ******************************
+
     return face_config_path
 
 def FaceDataset(object):
@@ -169,7 +188,7 @@ def FaceDataset(object):
         return img, face, (y1, y2, x1, x2)
 
 def stream_from_face_config(config_path, infinite_loop=False):
-    config = pd.read_csv(config_path, sep='\t')
+    config = pd.read_csv(config_path, sep='\t', comment='#')
     if infinite_loop and len(config) == 1:
         row = config.iloc[0, :]
         img = cv2.imread(row['img_path'])

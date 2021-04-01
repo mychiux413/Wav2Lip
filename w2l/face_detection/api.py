@@ -10,8 +10,8 @@ try:
 except BaseException:
     import urllib as request_file
 
-from .models import FAN, ResNetDepth
-from .utils import *
+from w2l.face_detection.models import FAN, ResNetDepth
+from w2l.face_detection.utils import *
 
 
 class LandmarksType(Enum):
@@ -57,7 +57,7 @@ class FaceAlignment:
             torch.backends.cudnn.benchmark = True
 
         # Get the face detector
-        face_detector_module = __import__('face_detection.detection.' + face_detector,
+        face_detector_module = __import__('w2l.face_detection.detection.' + face_detector,
                                           globals(), locals(), [face_detector], 0)
         self.face_detector = face_detector_module.FaceDetector(device=device, verbose=verbose)
 

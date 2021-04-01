@@ -1,0 +1,98 @@
+from os import listdir, path
+import numpy as np
+import scipy
+import cv2
+import os
+import sys
+import argparse
+from w2l.utils import audio
+import json
+import subprocess
+import random
+import string
+from tqdm import tqdm
+from glob import glob
+import torch
+from w2l import face_detection
+from w2l.models import Wav2Lip
+import platform
+from w2l.hparams import hparams as hp
+from w2l.utils import detect_face_and_dump_from_image, detect_face_and_dump_from_video, generate_video
+import shutil
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Inference code to lip-sync videos in the wild using Wav2Lip models')
+
+    parser.add_argument('--checkpoint_path', type=str,
+                        help='Name of saved checkpoint to load weights from', required=True)
+
+    parser.add_argument('--face', type=str,
+                        help='Filepath of video/image that contains faces to use', required=True)
+    parser.add_argument('--audio', type=str,
+                        help='Filepath of video/audio file to use as raw audio source', required=True)
+    parser.add_argument('--outfile', type=str, help='Video path to save result. See default for an e.g.',
+                        default='results/result_voice.mp4')
+
+    parser.add_argument('--static', type=bool,
+                        help='If True, then use only first video frame for inference', default=False)
+    parser.add_argument('--fps', type=float, help='Can be specified only if input is a static image (default: 25)',
+                        default=25., required=False)
+
+    parser.add_argument('--pads', nargs='+', type=int, default=[0, 10, 0, 0],
+                        help='Padding (top, bottom, left, right). Please adjust to include chin at least')
+
+    parser.add_argument('--face_det_batch_size', type=int,
+                        help='Batch size for face detection', default=2)
+    parser.add_argument('--wav2lip_batch_size', type=int,
+                        help='Batch size for Wav2Lip model(s)', default=128)
+
+    parser.add_argument(
+        '--resize_factor', default=1, type=int,
+        help='Reduce the resolution by this factor. Sometimes, best results are obtained at 480p or 720p')
+
+    parser.add_argument(
+        '--crop', nargs='+', type=int, default=[0, -1, 0, -1],
+        help='Crop video to a smaller region (top, bottom, left, right). Applied after resize_factor and rotate arg. '
+        'Useful if multiple face present. -1 implies the value will be auto-inferred based on height, width')
+
+    parser.add_argument(
+        '--box', nargs='+', type=int, default=[-1, -1, -1, -1],
+        help='Specify a constant bounding box for the face. Use only as a last resort if the face is not detected.'
+        'Also, might work only if the face is not moving around much. Syntax: (top, bottom, left, right).')
+
+    parser.add_argument(
+        '--rotate', default=False, action='store_true',
+        help='Sometimes videos taken from a phone can be flipped 90deg. If true, will flip video right by 90deg.'
+        'Use if you get a flipped result, despite feeding a normal looking video')
+
+    parser.add_argument('--nosmooth', default=False, action='store_true',
+                        help='Prevent smoothing face detections over a short temporal window')
+    parser.add_argument('--smooth_size', default=5,
+                        type=int, help='Specify the smooth size')
+
+    args = parser.parse_args()
+    if not os.path.isfile(args.face):
+        raise ValueError(
+            '--face argument must be a valid path to video/image file')
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    temp_face_dir = "temp/face_dump"
+
+    if args.static:
+        config_path = detect_face_and_dump_from_image(
+            args.face, temp_face_dir, device, hp.img_size, fps=args.fps, pads=args.pads, box=args.box)
+    else:
+        config_path = detect_face_and_dump_from_video(
+            args.face, temp_face_dir, device, hp.img_size, args.face_det_batch_size,
+            pads=args.pads, box=args.box, smooth=not args.nosmooth, smooth_size=args.smooth_size)
+
+    generate_video(config_path, args.audio, args.checkpoint_path, args.outfile,
+                   batch_size=args.wav2lip_batch_size, num_mels=hp.num_mels,
+                   mel_step_size=hp.syncnet_mel_step_size, sample_rate=hp.sample_rate)
+
+
+if __name__ == '__main__':
+    main()

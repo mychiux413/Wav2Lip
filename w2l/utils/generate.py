@@ -1,12 +1,13 @@
-from utils.face_detect import stream_from_face_config
-import audio
+from w2l.utils.face_detect import stream_from_face_config
+from w2l.utils import audio
 import numpy as np
 from tqdm import tqdm
-from models import Wav2Lip
+from w2l.models import Wav2Lip
 import torch
 import cv2
 import subprocess
 import platform
+import os
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -55,7 +56,7 @@ def to_mels(audio_path, fps, num_mels=80, mel_step_size=16, sample_rate=16000):
     return mel_chunks
 
 
-def datagen(config_path, mels, fps, batch_size=128):
+def datagen(config_path, mels, batch_size=128):
     img_batch, mel_batch, frame_batch, coords_batch = [], [], [], []
     stream = stream_from_face_config(config_path, infinite_loop=True)
 
@@ -94,13 +95,21 @@ def datagen(config_path, mels, fps, batch_size=128):
         yield img_batch, mel_batch, frame_batch, coords_batch
 
 
-def generate_video(face_config_path, audio_path, face_fps, model_path, output_path,
+def generate_video(face_config_path, audio_path, model_path, output_path, face_fps=25,
                    batch_size=128, num_mels=80, mel_step_size=16, sample_rate=16000):
+
+    assert os.path.exists(face_config_path)
+    with open(face_config_path, 'r') as f:
+        firstline = next(f)
+        if firstline.startswith('#'):
+            splits = firstline.split('fps=')
+            if len(splits) > 1:
+                face_fps = int(splits[1].strip())
+
     mels = to_mels(
         audio_path, face_fps,
         num_mels=num_mels, mel_step_size=mel_step_size, sample_rate=sample_rate)
-    gen = datagen(face_config_path, mels, face_fps,
-                  batch_size=batch_size)
+    gen = datagen(face_config_path, mels, batch_size=batch_size)
     for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, total=len(mels) // batch_size)):
         if i == 0:
             model = load_model(model_path)

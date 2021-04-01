@@ -1,13 +1,10 @@
 from os.path import dirname, join, basename, isfile
 from tqdm import tqdm
-
-from models import SyncNet_color as SyncNet
-import audio
+from wl2.utils import audio
 
 import torch
 from torch import nn
 from torch import optim
-import torch.backends.cudnn as cudnn
 from torch.utils import data as data_utils
 import numpy as np
 
@@ -17,7 +14,7 @@ import os
 import random
 import cv2
 import argparse
-from hparams import hparams, get_image_list
+from w2l.hparams import hparams, get_image_list
 from tqdm import tqdm
 import torchvision
 
@@ -37,7 +34,9 @@ class Dataset(object):
         self.all_videos = list(filter(
             lambda vidname: os.path.exists(join(vidname, "audio.wav")), get_image_list(data_root, split, limit=limit)))
         self.img_names = {
-            vidname: sorted(glob(join(vidname, '*.png')), key=lambda name: int(os.path.basename(name).split('.')[0])) for vidname in self.all_videos
+            vidname: sorted(
+                glob(join(vidname, '*.png')),
+                key=lambda name: int(os.path.basename(name).split('.')[0])) for vidname in self.all_videos
         }
         
         self.orig_mels = {}
