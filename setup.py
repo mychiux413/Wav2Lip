@@ -30,4 +30,5 @@ setup(
     ],
     python_requires='>=3.6',
     install_requires=requires,
+    entry_points=console_scripts,
 )
