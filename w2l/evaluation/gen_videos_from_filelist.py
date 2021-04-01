@@ -7,33 +7,26 @@ from glob import glob
 import torch
 
 sys.path.append('../')
-import audio
+from w2l.utils import audio
 import face_detection
-from models import Wav2Lip
+from w2l.models import Wav2Lip
 
-parser = argparse.ArgumentParser(description='Code to generate results on ReSyncED evaluation set')
-
-parser.add_argument('--mode', type=str, 
-					help='random | dubbed | tts', required=True)
+parser = argparse.ArgumentParser(description='Code to generate results for test filelists')
 
 parser.add_argument('--filelist', type=str, 
-					help='Filepath of filelist file to read', default=None)
-
+					help='Filepath of filelist file to read', required=True)
 parser.add_argument('--results_dir', type=str, help='Folder to save all results into', 
 									required=True)
 parser.add_argument('--data_root', type=str, required=True)
 parser.add_argument('--checkpoint_path', type=str, 
 					help='Name of saved checkpoint to load weights from', required=True)
-parser.add_argument('--pads', nargs='+', type=int, default=[0, 10, 0, 0], 
+
+parser.add_argument('--pads', nargs='+', type=int, default=[0, 0, 0, 0], 
 					help='Padding (top, bottom, left, right)')
-
 parser.add_argument('--face_det_batch_size', type=int, 
-					help='Single GPU batch size for face detection', default=16)
-
+					help='Single GPU batch size for face detection', default=64)
 parser.add_argument('--wav2lip_batch_size', type=int, help='Batch size for Wav2Lip', default=128)
-parser.add_argument('--face_res', help='Approximate resolution of the face at which to test', default=180)
-parser.add_argument('--min_frame_res', help='Do not downsample further below this frame resolution', default=480)
-parser.add_argument('--max_frame_res', help='Downsample to at least this frame resolution', default=720)
+
 # parser.add_argument('--resize_factor', default=1, type=int)
 
 args = parser.parse_args()
@@ -48,32 +41,9 @@ def get_smoothened_boxes(boxes, T):
 		boxes[i] = np.mean(window, axis=0)
 	return boxes
 
-def rescale_frames(images):
-	rect = detector.get_detections_for_batch(np.array([images[0]]))[0]
-	if rect is None:
-		raise ValueError('Face not detected!')
-	h, w = images[0].shape[:-1]
-
-	x1, y1, x2, y2 = rect
-
-	face_size = max(np.abs(y1 - y2), np.abs(x1 - x2))
-
-	diff = np.abs(face_size - args.face_res)
-	for factor in range(2, 16):
-		downsampled_res = face_size // factor
-		if min(h//factor, w//factor) < args.min_frame_res: break 
-		if np.abs(downsampled_res - args.face_res) >= diff: break
-
-	factor -= 1
-	if factor == 1: return images
-
-	return [cv2.resize(im, (im.shape[1]//(factor), im.shape[0]//(factor))) for im in images]
-
-
 def face_detect(images):
 	batch_size = args.face_det_batch_size
-	images = rescale_frames(images)
-
+	
 	while 1:
 		predictions = []
 		try:
@@ -83,6 +53,7 @@ def face_detect(images):
 			if batch_size == 1:
 				raise RuntimeError('Image too big to run face detection on GPU')
 			batch_size //= 2
+			args.face_det_batch_size = batch_size
 			print('Recovering from OOM error; New batch size: {}'.format(batch_size))
 			continue
 		break
@@ -103,7 +74,7 @@ def face_detect(images):
 	boxes = get_smoothened_boxes(np.array(results), T=5)
 	results = [[image[y1: y2, x1:x2], (y1, y2, x1, x2), True] for image, (x1, y1, x2, y2) in zip(images, boxes)]
 
-	return results, images 
+	return results 
 
 def datagen(frames, face_det_results, mels):
 	img_batch, mel_batch, frame_batch, coords_batch = [], [], [], []
@@ -146,27 +117,9 @@ def datagen(frames, face_det_results, mels):
 
 		yield img_batch, mel_batch, frame_batch, coords_batch
 
-def increase_frames(frames, l):
-	## evenly duplicating frames to increase length of video
-	while len(frames) < l:
-		dup_every = float(l) / len(frames)
-
-		final_frames = []
-		next_duplicate = 0.
-
-		for i, f in enumerate(frames):
-			final_frames.append(f)
-
-			if int(np.ceil(next_duplicate)) == i:
-				final_frames.append(f)
-
-			next_duplicate += dup_every
-
-		frames = final_frames
-
-	return frames[:l]
-
+fps = 25
 mel_step_size = 16
+mel_idx_multiplier = 80./fps
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print('Using {} for inference.'.format(device))
 
@@ -197,53 +150,28 @@ def load_model(path):
 model = load_model(args.checkpoint_path)
 
 def main():
+	assert args.data_root is not None
+	data_root = args.data_root
+
 	if not os.path.isdir(args.results_dir): os.makedirs(args.results_dir)
 
-	if args.mode == 'dubbed':
-		files = listdir(args.data_root)
-		lines = ['{} {}'.format(f, f) for f in files]
-
-	else:
-		assert args.filelist is not None
-		with open(args.filelist, 'r') as filelist:
-			lines = filelist.readlines()
+	with open(args.filelist, 'r') as filelist:
+		lines = filelist.readlines()
 
 	for idx, line in enumerate(tqdm(lines)):
-		video, audio_src = line.strip().split()
+		audio_src, video = line.strip().split()
 
-		audio_src = os.path.join(args.data_root, audio_src)
-		video = os.path.join(args.data_root, video)
+		audio_src = os.path.join(data_root, audio_src) + '.mp4'
+		video = os.path.join(data_root, video) + '.mp4'
 
-		command = 'ffmpeg -loglevel panic -y -i {} -strict -2 {}'.format(audio_src, '../temp/temp.wav')
+		command = "ffmpeg -loglevel panic -y -i '{}' -strict -2 '{}'".format(audio_src, '../temp/temp.wav')
 		subprocess.call(command, shell=True)
 		temp_audio = '../temp/temp.wav'
 
 		wav = audio.load_wav(temp_audio, 16000)
 		mel = audio.melspectrogram(wav)
-
 		if np.isnan(mel.reshape(-1)).sum() > 0:
-			raise ValueError('Mel contains nan!')
-
-		video_stream = cv2.VideoCapture(video)
-
-		fps = video_stream.get(cv2.CAP_PROP_FPS)
-		mel_idx_multiplier = 80./fps
-
-		full_frames = []
-		while 1:
-			still_reading, frame = video_stream.read()
-			if not still_reading:
-				video_stream.release()
-				break
-
-			if min(frame.shape[:-1]) > args.max_frame_res:
-				h, w = frame.shape[:-1]
-				scale_factor = min(h, w) / float(args.max_frame_res)
-				h = int(h/scale_factor)
-				w = int(w/scale_factor)
-
-				frame = cv2.resize(frame, (w, h))
-			full_frames.append(frame)
+			continue
 
 		mel_chunks = []
 		i = 0
@@ -254,17 +182,23 @@ def main():
 			mel_chunks.append(mel[:, start_idx : start_idx + mel_step_size])
 			i += 1
 
-		if len(full_frames) < len(mel_chunks):
-			if args.mode == 'tts':
-				full_frames = increase_frames(full_frames, len(mel_chunks))
-			else:
-				raise ValueError('#Frames, audio length mismatch')
+		video_stream = cv2.VideoCapture(video)
+			
+		full_frames = []
+		while 1:
+			still_reading, frame = video_stream.read()
+			if not still_reading or len(full_frames) > len(mel_chunks):
+				video_stream.release()
+				break
+			full_frames.append(frame)
 
-		else:
-			full_frames = full_frames[:len(mel_chunks)]
+		if len(full_frames) < len(mel_chunks):
+			continue
+
+		full_frames = full_frames[:len(mel_chunks)]
 
 		try:
-			face_det_results, full_frames = face_detect(full_frames.copy())
+			face_det_results = face_detect(full_frames.copy())
 		except ValueError as e:
 			continue
 
@@ -274,7 +208,6 @@ def main():
 		for i, (img_batch, mel_batch, frames, coords) in enumerate(gen):
 			if i == 0:
 				frame_h, frame_w = full_frames[0].shape[:-1]
-
 				out = cv2.VideoWriter('../temp/result.avi', 
 								cv2.VideoWriter_fourcc(*'DIVX'), fps, (frame_w, frame_h))
 
@@ -296,10 +229,10 @@ def main():
 		out.release()
 
 		vid = os.path.join(args.results_dir, '{}.mp4'.format(idx))
-		command = 'ffmpeg -loglevel panic -y -i {} -i {} -strict -2 -q:v 1 {}'.format('../temp/temp.wav', 
+
+		command = "ffmpeg -loglevel panic -y -i '{}' -i '{}' -strict -2 -q:v 1 '{}'".format(temp_audio, 
 								'../temp/result.avi', vid)
 		subprocess.call(command, shell=True)
-
 
 if __name__ == '__main__':
 	main()

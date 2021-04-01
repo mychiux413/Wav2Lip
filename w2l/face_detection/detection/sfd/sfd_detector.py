@@ -12,9 +12,10 @@ models_urls = {
     's3fd': 'https://www.adrianbulat.com/downloads/python-fan/s3fd-619a316812.pth',
 }
 
+S3FD_PATH = os.environ.get("S3FD_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), 's3fd.pth'))
 
 class SFDDetector(FaceDetector):
-    def __init__(self, device, path_to_detector=os.path.join(os.path.dirname(os.path.abspath(__file__)), 's3fd.pth'), verbose=False):
+    def __init__(self, device, path_to_detector=S3FD_PATH, verbose=False):
         super(SFDDetector, self).__init__(device, verbose)
 
         # Initialise the face detector
