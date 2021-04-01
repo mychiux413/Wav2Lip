@@ -1,131 +1,124 @@
 from glob import glob
 import os
 
-def get_image_list(data_root, split, limit=0):
-	filelist = []
-
-	i = 0
-	with open('filelists/{}.txt'.format(split)) as f:
-		for line in f:
-			line = line.split('#')[0]
-			line = line.strip()
-			filelist.append(os.path.join(data_root, line))
-			i += 1
-			if limit > 0 and i > limit:
-				break
-
-	return filelist
 
 class HParams:
-	def __init__(self, **kwargs):
-		self.data = {}
+    def __init__(self, **kwargs):
+        self.data = {}
 
-		for key, value in kwargs.items():
-			self.data[key] = value
+        for key, value in kwargs.items():
+            self.data[key] = value
 
-		# **** environ control ****
-		for key, value in self.data.items():
-			env_key = "W2L_" + key.upper()
-			value_from_env = os.environ.get(env_key)
-			if value_from_env is None:
-				continue
-			for tp in [bool, float, int, str]:
-				if isinstance(value, tp):
-					print("overwrite HParams from environ var: {}={}".format(
-						env_key, value_from_env))
-					self.data[key] = tp(value_from_env)
-					break
-		# *************************
+        # **** environ control ****
+        for key, value in self.data.items():
+            env_key = "W2L_" + key.upper()
+            value_from_env = os.environ.get(env_key)
+            if value_from_env is None:
+                continue
+            for tp in [bool, float, int, str]:
+                if isinstance(value, tp):
+                    print("overwrite HParams from environ var: {}={}".format(
+                        env_key, value_from_env))
+                    self.data[key] = tp(value_from_env)
+                    break
+        # *************************
 
-	def __getattr__(self, key):
-		if key not in self.data:
-			raise AttributeError("'HParams' object has no attribute %s" % key)
-		return self.data[key]
+    def __getattr__(self, key):
+        if key not in self.data:
+            raise AttributeError("'HParams' object has no attribute %s" % key)
+        return self.data[key]
 
-	def set_hparam(self, key, value):
-		self.data[key] = value
+    def set_hparam(self, key, value):
+        self.data[key] = value
 
 
 # Default hyperparameters
 hparams = HParams(
-	num_mels=80,  # Number of mel-spectrogram channels and local conditioning dimensionality
-	#  network
-	rescale=True,  # Whether to rescale audio prior to preprocessing
-	rescaling_max=0.9,  # Rescaling value
-	
-	# Use LWS (https://github.com/Jonathan-LeRoux/lws) for STFT and phase reconstruction
-	# It"s preferred to set True to use with https://github.com/r9y9/wavenet_vocoder
-	# Does not work if n_ffit is not multiple of hop_size!!
-	use_lws=False,
-	
-	n_fft=800,  # Extra window size is filled with 0 paddings to match this parameter
-	hop_size=200,  # For 16000Hz, 200 = 12.5 ms (0.0125 * sample_rate)
-	win_size=800,  # For 16000Hz, 800 = 50 ms (If None, win_size = n_fft) (0.05 * sample_rate)
-	sample_rate=16000,  # 16000Hz (corresponding to librispeech) (sox --i <filename>)
-	
-	frame_shift_ms=None,  # Can replace hop_size parameter. (Recommended: 12.5)
-	
-	# Mel and Linear spectrograms normalization/scaling and clipping
-	signal_normalization=True,
-	# Whether to normalize mel spectrograms to some predefined range (following below parameters)
-	allow_clipping_in_normalization=True,  # Only relevant if mel_normalization = True
-	symmetric_mels=True,
-	# Whether to scale the data to be symmetric around 0. (Also multiplies the output range by 2, 
-	# faster and cleaner convergence)
-	max_abs_value=4.,
-	# max absolute value of data. If symmetric, data will be [-max, max] else [0, max] (Must not 
-	# be too big to avoid gradient explosion, 
-	# not too small for fast convergence)
-	# Contribution by @begeekmyfriend
-	# Spectrogram Pre-Emphasis (Lfilter: Reduce spectrogram noise and helps model certitude 
-	# levels. Also allows for better G&L phase reconstruction)
-	preemphasize=True,  # whether to apply filter
-	preemphasis=0.97,  # filter coefficient.
-	
-	# Limits
-	min_level_db=-100,
-	ref_level_db=20,
-	fmin=55,
-	# Set this to 55 if your speaker is male! if female, 95 should help taking off noise. (To 
-	# test depending on dataset. Pitch info: male~[65, 260], female~[100, 525])
-	fmax=7600,  # To be increased/reduced depending on data.
+    num_mels=80,  # Number of mel-spectrogram channels and local conditioning dimensionality
+    #  network
+    rescale=True,  # Whether to rescale audio prior to preprocessing
+    rescaling_max=0.9,  # Rescaling value
 
-	###################### Our training parameters #################################
-	img_size=96,  # 96 or 192
-	fps=30,
-	
-	batch_size=8,
-	initial_learning_rate=5e-5,
-	opt_amsgrad=True,
-	opt_weight_decay=0.0,
-	nepochs=200000000000000000,  ### ctrl + c, stop whenever eval loss is consistently greater than train loss for ~10 epochs
-	num_workers=8,
-	checkpoint_interval=10000,
-	eval_interval=10000,
+    # Use LWS (https://github.com/Jonathan-LeRoux/lws) for STFT and phase reconstruction
+    # It"s preferred to set True to use with https://github.com/r9y9/wavenet_vocoder
+    # Does not work if n_ffit is not multiple of hop_size!!
+    use_lws=False,
+
+    n_fft=800,  # Extra window size is filled with 0 paddings to match this parameter
+    hop_size=200,  # For 16000Hz, 200 = 12.5 ms (0.0125 * sample_rate)
+    # For 16000Hz, 800 = 50 ms (If None, win_size = n_fft) (0.05 * sample_rate)
+    win_size=800,
+    # 16000Hz (corresponding to librispeech) (sox --i <filename>)
+    sample_rate=16000,
+
+    # Can replace hop_size parameter. (Recommended: 12.5)
+    frame_shift_ms=None,
+
+    # Mel and Linear spectrograms normalization/scaling and clipping
+    signal_normalization=True,
+    # Whether to normalize mel spectrograms to some predefined range (following below parameters)
+    # Only relevant if mel_normalization = True
+    allow_clipping_in_normalization=True,
+    symmetric_mels=True,
+    # Whether to scale the data to be symmetric around 0. (Also multiplies the output range by 2,
+    # faster and cleaner convergence)
+    max_abs_value=4.,
+    # max absolute value of data. If symmetric, data will be [-max, max] else [0, max] (Must not
+    # be too big to avoid gradient explosion,
+    # not too small for fast convergence)
+    # Contribution by @begeekmyfriend
+    # Spectrogram Pre-Emphasis (Lfilter: Reduce spectrogram noise and helps model certitude
+    # levels. Also allows for better G&L phase reconstruction)
+    preemphasize=True,  # whether to apply filter
+    preemphasis=0.97,  # filter coefficient.
+
+    # Limits
+    min_level_db=-100,
+    ref_level_db=20,
+    fmin=55,
+    # Set this to 55 if your speaker is male! if female, 95 should help taking off noise. (To
+    # test depending on dataset. Pitch info: male~[65, 260], female~[100, 525])
+    fmax=7600,  # To be increased/reduced depending on data.
+
+    ###################### Our training parameters #################################
+    img_size=96,  # 96 or 192
+    fps=30,
+
+    batch_size=8,
+    initial_learning_rate=5e-5,
+    opt_amsgrad=True,
+    opt_weight_decay=0.0,
+    # ctrl + c, stop whenever eval loss is consistently greater than train loss for ~10 epochs
+    nepochs=200000000000000000,
+    num_workers=8,
+    checkpoint_interval=10000,
+    eval_interval=10000,
     save_optimizer_state=True,
 
-	sampling_half_window_size_seconds=2.0,
-	unmask_fringe_width=5,
-	img_augment=True,
+    sampling_half_window_size_seconds=2.0,
+    unmask_fringe_width=5,
+    img_augment=True,
 
-    syncnet_wt=0.0, # is initially zero, will be set automatically to 0.03 later. Leads to faster convergence. 
-	syncnet_batch_size=64,
-	syncnet_lr=5e-6,
-	syncnet_eval_interval=20000,
-	syncnet_checkpoint_interval=20000,
-	syncnet_T=5,
-	syncnet_mel_step_size=16,
-	syncnet_opt_amsgrad=True,
-	syncnet_opt_weight_decay=0.0,
+    # is initially zero, will be set automatically to 0.03 later. Leads to faster convergence.
+    syncnet_wt=0.0,
+    syncnet_batch_size=64,
+    syncnet_lr=5e-6,
+    syncnet_eval_interval=20000,
+    syncnet_checkpoint_interval=20000,
+    syncnet_T=5,
+    syncnet_mel_step_size=16,
+    syncnet_opt_amsgrad=True,
+    syncnet_opt_weight_decay=0.0,
 
-	disc_wt=0.07,
-	disc_initial_learning_rate=1e-6,
-	disc_opt_amsgrad=True,
-	disc_opt_weight_decay=0.0,
+    disc_wt=0.07,
+    disc_initial_learning_rate=1e-6,
+    disc_opt_amsgrad=True,
+    disc_opt_weight_decay=0.0,
 )
 
 
 def hparams_debug_string():
-	values = hparams.values()
-	hp = ["  %s: %s" % (name, values[name]) for name in sorted(values) if name != "sentences"]
-	return "Hyperparameters:\n" + "\n".join(hp)
+    values = hparams.values()
+    hp = ["  %s: %s" % (name, values[name])
+          for name in sorted(values) if name != "sentences"]
+    return "Hyperparameters:\n" + "\n".join(hp)

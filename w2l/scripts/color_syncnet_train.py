@@ -1,25 +1,22 @@
-from os.path import dirname, join, basename, isfile
+from os.path import join
 from tqdm import tqdm
 
 from w2l.models import SyncNet_color as SyncNet
-from w2l.utils import audio
 
 import torch
 from torch import nn
 from torch import optim
-import torch.backends.cudnn as cudnn
 from torch.utils import data as data_utils
-import numpy as np
 
-from glob import glob
 
 import os
-import random
-import cv2
 import argparse
-from w2l.hparams import hparams, get_image_list
+from w2l.hparams import hparams
 from w2l.utils.data import SyncnetDataset
+from w2l.utils.env import use_cuda, device
 
+global_step = 0
+global_epoch = 0
 
 logloss = nn.BCELoss()
 
@@ -35,7 +32,7 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
           checkpoint_dir=None, checkpoint_interval=None, nepochs=None):
 
     global global_step, global_epoch
-    resumed_step = global_step
+    # resumed_step = global_step
 
     while global_epoch < nepochs:
         running_loss = 0.
@@ -60,7 +57,7 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             optimizer.step()
 
             global_step += 1
-            cur_session_steps = global_step - resumed_step
+            # cur_session_steps = global_step - resumed_step
             running_loss += loss.item()
 
             if global_step == 1 or global_step % checkpoint_interval == 0:
@@ -163,13 +160,11 @@ def main():
                         help='Resumed from this checkpoint', default=None, type=str)
     parser.add_argument('--train_limit', type=int, required=False, default=0)
     parser.add_argument('--val_limit', type=int, required=False, default=0)
+    parser.add_argument('--filelists_dir',
+                        help='Specify filelists directory', type=str, default='filelists')
 
     args = parser.parse_args()
 
-    global_step = 0
-    global_epoch = 0
-    use_cuda = torch.cuda.is_available()
-    print('use_cuda: {}'.format(use_cuda))
     checkpoint_dir = args.checkpoint_dir
     checkpoint_path = args.checkpoint_path
 
@@ -178,10 +173,12 @@ def main():
 
     # Dataset and Dataloader setup
     train_dataset = SyncnetDataset('train', args.data_root, limit=args.train_limit,
-                                   sampling_half_window_size_seconds=1e10)
+                                   sampling_half_window_size_seconds=1e10,
+                                   filelists_dir=args.filelists_dir)
     val_dataset = SyncnetDataset('val', args.data_root, limit=args.val_limit,
                                  sampling_half_window_size_seconds=1e10,
-                                 img_augment=False)
+                                 img_augment=False,
+                                 filelists_dir=args.filelists_dir)
 
     train_data_loader = data_utils.DataLoader(
         train_dataset, batch_size=hparams.syncnet_batch_size,
@@ -190,8 +187,6 @@ def main():
     val_data_loader = data_utils.DataLoader(
         val_dataset, batch_size=hparams.syncnet_batch_size,
         num_workers=8)
-
-    device = torch.device("cuda" if use_cuda else "cpu")
 
     # Model
     model = SyncNet().to(device)

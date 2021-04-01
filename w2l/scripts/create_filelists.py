@@ -15,7 +15,7 @@ import cv2
 
 
 class SyncnetDataset(Dataset):
-    def __init__(self, data_root, only_true_image=True):
+    def __init__(self, data_root, only_true_image=True, img_size=96):
         self.all_videos = []
         for dirname in os.listdir(data_root):
             dirpath = os.path.join(data_root, dirname)
@@ -33,7 +33,9 @@ class SyncnetDataset(Dataset):
                 self.all_videos.append(video_path)
 
         self.img_names = {
-            vidname: sorted(glob(os.path.join(vidname, '*.png')), key=lambda name: int(os.path.basename(name).split('.')[0])) for vidname in self.all_videos
+            vidname: sorted(
+                glob(os.path.join(vidname, '*.png')),
+                key=lambda name: int(os.path.basename(name).split('.')[0])) for vidname in self.all_videos
         }
 
         self.orig_mels = {}
@@ -59,6 +61,7 @@ class SyncnetDataset(Dataset):
 
         # 實驗發現, 只要是wrong image, model的分辨能力都很好, 因此不需要sampling wrong image
         self.only_true_image = only_true_image
+        self.img_size = img_size
 
     def __getitem__(self, idx):
         while 1:
@@ -98,8 +101,8 @@ class SyncnetDataset(Dataset):
                     break
                 try:
                     img = cv2.resize(
-                        img, (args.syncnet_img_size, args.syncnet_img_size))
-                except Exception as e:
+                        img, (self.img_size, self.img_size))
+                except Exception as _:  # noqa: F841
                     all_read = False
                     break
 
@@ -195,7 +198,7 @@ def evaluate_datasets_losses(syncnet_checkpoint_path, img_size, data_root, epoch
     return stat_losses
 
 
-def main(args):
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_root', type=str, required=True)
     parser.add_argument('--train_ratio', type=float,
@@ -212,6 +215,8 @@ def main(args):
                         help='Specify the epoch to evaluate cosine loss', default=10, type=int)
     parser.add_argument('--syncnet_img_size',
                         help='Image Size of Syncnet', default=96, type=int)
+    parser.add_argument('--filelists_dir',
+                        help='Specify filelists directory', type=str, default='filelists')
 
     args = parser.parse_args()
 
@@ -248,24 +253,31 @@ def main(args):
                 train_lines.append(line)
             else:
                 val_lines.append(line)
+    if len(val_lines) == 0:
+        val_lines.append(train_lines.pop())
     np.random.shuffle(train_lines)
     np.random.shuffle(val_lines)
 
-    with open('filelists/train.txt', 'w') as t:
+    if not os.path.exists(args.filelists_dir):
+        os.makedirs(args.filelists_dir)
+    train_path = os.path.join(args.filelists_dir, "train.txt")
+    val_path = os.path.join(args.filelists_dir, "val.txt")
+
+    with open(train_path, 'w') as t:
         for i, line in enumerate(train_lines):
             if args.train_limit > 0 and i > args.train_limit:
                 break
             t.write(line + "\n")
             i_train += 1
 
-    with open('filelists/val.txt', 'w') as v:
+    with open(val_path, 'w') as v:
         for i, line in enumerate(val_lines):
             if args.val_limit > 0 and i > args.val_limit:
                 break
             v.write(line + "\n")
             i_val += 1
-    print("Create {} train data at: {}".format(i_train, 'filelists/train.txt'))
-    print("Create {} val data at: {}".format(i_val, 'filelists/val.txt'))
+    print("Create {} train data at: {}".format(i_train, train_path))
+    print("Create {} val data at: {}".format(i_val, val_path))
 
 
 if __name__ == "__main__":

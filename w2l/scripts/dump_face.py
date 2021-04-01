@@ -1,9 +1,8 @@
 import os
 import argparse
-import cv2
-import torch
 from w2l.hparams import hparams as hp
 from w2l.utils import detect_face_and_dump_from_image, detect_face_and_dump_from_video
+from w2l.utils.env import use_cuda
 
 
 def main():
@@ -35,8 +34,7 @@ def main():
 
     args = parser.parse_args()
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print('Using {} for dumping face.'.format(device))
+    device = 'cuda' if use_cuda else 'cpu'
 
     if os.path.isfile(args.face) and args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
         args.static = True
@@ -44,12 +42,6 @@ def main():
     if not os.path.isfile(args.face):
         raise ValueError(
             '--face argument must be a valid path to video/image file')
-    elif args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
-        fps = args.fps
-    else:
-        video_stream = cv2.VideoCapture(args.face)
-        fps = video_stream.get(cv2.CAP_PROP_FPS)
-        video_stream.release()
 
     if args.static:
         config_path = detect_face_and_dump_from_image(

@@ -1,24 +1,8 @@
-from os import listdir, path
-import numpy as np
-import scipy
-import cv2
 import os
-import sys
 import argparse
-from w2l.utils import audio
-import json
-import subprocess
-import random
-import string
-from tqdm import tqdm
-from glob import glob
-import torch
-from w2l import face_detection
-from w2l.models import Wav2Lip
-import platform
 from w2l.hparams import hparams as hp
 from w2l.utils import detect_face_and_dump_from_image, detect_face_and_dump_from_video, generate_video
-import shutil
+from w2l.utils.env import use_cuda
 
 
 def main():
@@ -77,7 +61,7 @@ def main():
         raise ValueError(
             '--face argument must be a valid path to video/image file')
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda' if use_cuda else 'cpu'
 
     temp_face_dir = "temp/face_dump"
 

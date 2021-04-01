@@ -23,6 +23,7 @@ def stream_mel_chunk(filepath, fps):
         yield mel[:, start_idx: start_idx + hp.syncnet_mel_step_size]
         i += 1
 
+
 def get_mel_chunks_count(filepath, fps):
     wav = audio.load_wav(filepath, hp.sample_rate)
     mel = audio.melspectrogram(wav)
@@ -36,6 +37,7 @@ def get_video_fps_and_frame_count(filepath):
     fps = video_stream.get(cv2.CAP_PROP_FPS)
     video_stream.release()
     return fps, n_frame
+
 
 def stream_video(filepath, infinite_loop=False):
     video_stream = cv2.VideoCapture(filepath)
@@ -63,4 +65,3 @@ def stream_video_as_batch(filepath, batch_size, steps=1, infinite_loop=False):
         batch.append(frame)
     if len(batch) > 0:
         yield batch
-

@@ -18,9 +18,11 @@ console_scripts = {
         'w2l-wav2lip-train=w2l.scripts.wav2lip_train:main',
     ]
 }
+
 setup(
     name="w2l",
-    version=subprocess.check_output(['git', 'describe', '--tags']).strip().decode('ascii'),
+    version=subprocess.check_output(
+        ['git', 'describe', '--tags']).strip().decode('ascii'),
     url="https://github.com/mychiux413/Wav2Lip",
     packages=find_packages(include=['w2l']),
     classifiers=[

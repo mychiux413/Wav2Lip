@@ -1,13 +1,10 @@
 import os
-import torch
 import cv2
 from w2l.face_detection import FaceAlignment, LandmarksType
 from w2l.utils.stream import stream_video_as_batch, get_video_fps_and_frame_count
 import pandas as pd
 from tqdm import tqdm
 import numpy as np
-from torch.utils import data as data_utils
-from w2l.hparams import hparams
 
 
 class Smoothier:
@@ -19,6 +16,7 @@ class Smoothier:
         self.T = T
         self.PREV_RATIO = (T - 1.0) / T
         self.AFTER_RATIO = 1.0 / T
+
     def smooth(self, x1, x2, y1, y2):
         if x1 == -1:
             return x1, x2, y1, y2
@@ -27,6 +25,7 @@ class Smoothier:
         self.y1 = int(self.PREV_RATIO * self.y1 + self.AFTER_RATIO * y1)
         self.y2 = int(self.PREV_RATIO * self.y2 + self.AFTER_RATIO * y2)
         return self.x1, self.x2, self.y1, self.y2
+
 
 def detect_face_and_dump_from_image(img_path, dump_dir, device, face_size, fps=25, pads=None, box=None):
     if pads is None:
@@ -78,7 +77,7 @@ def detect_face_and_dump_from_image(img_path, dump_dir, device, face_size, fps=2
 
 
 def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_detect_batch_size=2,
-                    pads=None, box=None, smooth=False, smooth_size=5):
+                                    pads=None, box=None, smooth=False, smooth_size=5):
     if pads is None:
         pads = (0, 0, 0, 0)
     if box is None:
@@ -93,7 +92,9 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
     pady1, pady2, padx1, padx2 = pads
     _, frame_count = get_video_fps_and_frame_count(vidpath)
     smoothier = None
-    for frames in tqdm(stream_video_as_batch(vidpath, face_detect_batch_size, face_detect_batch_size), desc="dump face", total=frame_count // face_detect_batch_size):
+    for frames in tqdm(stream_video_as_batch(
+            vidpath, face_detect_batch_size, face_detect_batch_size),
+            desc="dump face", total=frame_count // face_detect_batch_size):
         if box[0] == -1:
             rects = detector.get_detections_for_batch(np.array(frames))
             for rect, frame in zip(rects, frames):
@@ -172,6 +173,7 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
 
     return face_config_path
 
+
 def FaceDataset(object):
     def __init__(self, config_path):
         self.config = pd.read_csv(config_path, sep='\t')
@@ -179,6 +181,7 @@ def FaceDataset(object):
 
     def __len__(self):
         return len(self.config)
+
     def __getitem__(self, idx):
         row = self.config.iloc[idx]
         img = cv2.imread(row['img_path'])
@@ -186,6 +189,7 @@ def FaceDataset(object):
             face = cv2.imread(row['face_path'])
         x1, x2, y1, y2 = (row['x1'], row['x2'], row['y1'], row['y2'])
         return img, face, (y1, y2, x1, x2)
+
 
 def stream_from_face_config(config_path, infinite_loop=False):
     config = pd.read_csv(config_path, sep='\t', comment='#')

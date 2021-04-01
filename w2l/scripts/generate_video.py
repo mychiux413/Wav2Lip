@@ -1,9 +1,9 @@
 import os
-import torch
 import argparse
 from w2l.hparams import hparams as hp
 from w2l.utils import generate_video
 import shutil
+import subprocess
 
 
 def main():
@@ -24,9 +24,6 @@ def main():
                         help='Batch size for synthesize', default=64)
     parser.add_argument('--remove_face_dump_dir', action='store_true')
     args = parser.parse_args()
-
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print('Using {} for synthesizing video.'.format(device))
 
     if not args.audio.endswith('.wav'):
         print('Extracting raw audio...')

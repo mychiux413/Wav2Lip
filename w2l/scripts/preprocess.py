@@ -3,9 +3,7 @@ import sys
 if sys.version_info[0] < 3 and sys.version_info[1] < 2:
     raise Exception("Must be using >= Python 3.2")
 
-from os import listdir, path
-
-import multiprocessing as mp
+from os import path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import argparse
@@ -15,14 +13,13 @@ import traceback
 import subprocess
 from tqdm import tqdm
 from glob import glob
-from w2l.utils import audio
 from w2l.hparams import hparams as hp
 
 from w2l import face_detection
 from w2l.utils.stream import stream_video_as_batch
 
 
-def process_video_file(vfile, args, gpu_id):
+def process_video_file(vfile, args, gpu_id, fa):
     vidname = os.path.basename(vfile).split('.')[0]
     dirname = vfile.split('/')[-2]
 
@@ -65,7 +62,7 @@ def process_video_file(vfile, args, gpu_id):
                         fb[j][y1:y2, x1:x2])
 
 
-def process_audio_file(vfile, args):
+def process_audio_file(vfile, args, template):
     vidname = os.path.basename(vfile).split('.')[0]
     dirname = vfile.split('/')[-2]
 
@@ -81,9 +78,9 @@ def process_audio_file(vfile, args):
 
 
 def mp_handler(job):
-    vfile, args, gpu_id = job
+    vfile, args, gpu_id, fa = job
     try:
-        process_video_file(vfile, args, gpu_id)
+        process_video_file(vfile, args, gpu_id, fa)
     except KeyboardInterrupt:
         exit(0)
     except Exception as err:
@@ -109,14 +106,13 @@ def main():
                                        device='cuda:{}'.format(id)) for id in range(args.ngpu)]
 
     template = "ffmpeg -loglevel panic -y -i '{}' -strict -2 '{}'"
-    # template2 = 'ffmpeg -hide_banner -loglevel panic -threads 1 -y -i {} -async 1 -ac 1 -vn -acodec pcm_s16le -ar 16000 {}'
 
     print('Started processing for {} with {} GPUs'.format(
         args.data_root, args.ngpu))
 
     filelist = glob(path.join(args.data_root, '*/*.mp4'))
 
-    jobs = [(vfile, args, i % args.ngpu) for i, vfile in enumerate(filelist)]
+    jobs = [(vfile, args, i % args.ngpu, fa) for i, vfile in enumerate(filelist)]
     p = ThreadPoolExecutor(args.ngpu)
     futures = [p.submit(mp_handler, j) for j in jobs]
     _ = [r.result() for r in tqdm(as_completed(futures), total=len(futures))]
@@ -125,10 +121,10 @@ def main():
 
     for vfile in tqdm(filelist):
         try:
-            process_audio_file(vfile, args)
+            process_audio_file(vfile, args, template)
         except KeyboardInterrupt:
             exit(0)
-        except:
+        except Exception as _:  # noqa: F841
             traceback.print_exc()
             continue
 

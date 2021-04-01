@@ -1,25 +1,28 @@
-from os.path import dirname, join, basename, isfile
+from os.path import join
 from tqdm import tqdm
 
 from w2l.models import SyncNet_color as SyncNet
 from w2l.models import Wav2Lip as Wav2Lip
-from w2l.utils import audio
 
 import torch
 from torch import nn
 from torch import optim
-import torch.backends.cudnn as cudnn
 from torch.utils import data as data_utils
 import numpy as np
 
-from glob import glob
-
 import os
-import random
 import cv2
 import argparse
-from w2l.hparams import hparams, get_image_list
+from w2l.hparams import hparams
 from w2l.utils.data import Wav2LipDataset
+from w2l.utils.env import device, use_cuda
+
+global_step = 0
+global_epoch = 0
+
+syncnet = SyncNet().to(device)
+for p in syncnet.parameters():
+    p.requires_grad = False
 
 
 def save_sample_images(x, g, gt, global_step, checkpoint_dir):
@@ -66,11 +69,11 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
           checkpoint_dir=None, checkpoint_interval=None, nepochs=None):
 
     global global_step, global_epoch
-    resumed_step = global_step
+    # resumed_step = global_step
 
     while global_epoch < nepochs:
         print('Starting Epoch: {}'.format(global_epoch))
-        running_sync_loss, running_l1_loss = 0., 0.
+        running_sync_loss, running_l1_loss, running_target_loss = 0., 0., 0.
         prog_bar = tqdm(enumerate(train_data_loader))
         for step, (x, indiv_mels, mel, gt) in prog_bar:
             if x.size(0) == 1:
@@ -102,8 +105,9 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
                 save_sample_images(x, g, gt, global_step, checkpoint_dir)
 
             global_step += 1
-            cur_session_steps = global_step - resumed_step
+            # cur_session_steps = global_step - resumed_step
 
+            running_target_loss += loss.item()
             running_l1_loss += l1loss.item()
             if hparams.syncnet_wt > 0.:
                 running_sync_loss += sync_loss.item()
@@ -123,8 +127,12 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
                         # without image GAN a lesser weight is sufficient
                         hparams.set_hparam('syncnet_wt', 0.01)
 
-            prog_bar.set_description('L1: {}, Sync Loss: {}'.format(running_l1_loss / (step + 1),
-                                                                    running_sync_loss / (step + 1)))
+            next_step = step + 1
+            prog_bar.set_description('L1: {:04f}, Sync Loss: {:04f}, Target Loss: {:04f}'.format(
+                running_l1_loss / next_step,
+                running_sync_loss / next_step,
+                running_target_loss / next_step,
+            ))
 
         global_epoch += 1
 
@@ -132,7 +140,7 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
 def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
     eval_steps = 700
     print('Evaluating for {} steps'.format(eval_steps))
-    sync_losses, recon_losses = [], []
+    sync_losses, recon_losses, target_losses = [], [], []
     step = 0
     while 1:
         for x, indiv_mels, mel, gt in test_data_loader:
@@ -151,16 +159,20 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
 
             sync_loss = get_sync_loss(mel, g)
             l1loss = recon_loss(g, gt)
+            loss = hparams.syncnet_wt * sync_loss + \
+                (1 - hparams.syncnet_wt) * l1loss
 
             sync_losses.append(sync_loss.item())
             recon_losses.append(l1loss.item())
+            target_losses.append(loss.item())
 
             if step > eval_steps:
-                averaged_sync_loss = sum(sync_losses) / len(sync_losses)
-                averaged_recon_loss = sum(recon_losses) / len(recon_losses)
+                averaged_sync_loss = np.mean(sync_losses)
+                averaged_recon_loss = np.mean(recon_losses)
+                averaged_target_loss = np.mean(target_losses)
 
-                print('L1: {}, Sync loss: {}'.format(
-                    averaged_recon_loss, averaged_sync_loss))
+                print('L1: {:04f}, Sync loss: {:04f}, Target Loss: {:04f}'.format(
+                    averaged_recon_loss, averaged_sync_loss, averaged_target_loss))
 
                 return averaged_sync_loss
 
@@ -225,28 +237,28 @@ def main():
 
     parser.add_argument(
         '--checkpoint_path', help='Resume from this checkpoint', default=None, type=str)
+    parser.add_argument('--train_limit', type=int,
+                        required=False, default=0)
+    parser.add_argument('--val_limit', type=int,
+                        required=False, default=0)
+    parser.add_argument('--filelists_dir',
+                        help='Specify filelists directory', type=str, default='filelists')
 
     args = parser.parse_args()
-
-    global_step = 0
-    global_epoch = 0
-    use_cuda = torch.cuda.is_available()
-    print('use_cuda: {}'.format(use_cuda))
-
-    device = torch.device("cuda" if use_cuda else "cpu")
-    syncnet = SyncNet().to(device)
-    for p in syncnet.parameters():
-        p.requires_grad = False
 
     checkpoint_dir = args.checkpoint_dir
 
     # Dataset and Dataloader setup
     train_dataset = Wav2LipDataset('train', args.data_root,
                                    sampling_half_window_size_seconds=hparams.sampling_half_window_size_seconds,
-                                   unmask_fringe_width=hparams.unmask_fringe_width)
+                                   unmask_fringe_width=hparams.unmask_fringe_width,
+                                   limit=args.train_limit,
+                                   filelists_dir=args.filelists_dir)
     test_dataset = Wav2LipDataset('val', args.data_root,
                                   sampling_half_window_size_seconds=hparams.sampling_half_window_size_seconds,
-                                  unmask_fringe_width=hparams.unmask_fringe_width, img_augment=False)
+                                  unmask_fringe_width=hparams.unmask_fringe_width, img_augment=False,
+                                  limit=args.val_limit,
+                                  filelists_dir=args.filelists_dir)
 
     train_data_loader = data_utils.DataLoader(
         train_dataset, batch_size=hparams.batch_size,
@@ -255,8 +267,6 @@ def main():
     test_data_loader = data_utils.DataLoader(
         test_dataset, batch_size=hparams.batch_size,
         num_workers=4)
-
-    device = torch.device("cuda" if use_cuda else "cpu")
 
     # Model
     model = Wav2Lip().to(device)
