@@ -1,14 +1,8 @@
 from os.path import dirname, join, basename, isfile
 from tqdm import tqdm
-
-from models import SyncNet_color as SyncNet
-import audio
+from w2l.utils import audio
 
 import torch
-from torch import nn
-from torch import optim
-import torch.backends.cudnn as cudnn
-from torch.utils import data as data_utils
 import numpy as np
 
 from glob import glob
@@ -16,30 +10,51 @@ from glob import glob
 import os
 import random
 import cv2
-import argparse
-from hparams import hparams, get_image_list
-from tqdm import tqdm
+from w2l.hparams import hparams
 import torchvision
 
 augment = torchvision.transforms.Compose([
     torchvision.transforms.RandomGrayscale(0.1),
-    torchvision.transforms.ColorJitter(brightness=(0.6, 1.4), contrast=(0.6, 1.4), saturation=(0.6, 1.4), hue=0),
+    torchvision.transforms.ColorJitter(brightness=(
+        0.6, 1.4), contrast=(0.6, 1.4), saturation=(0.6, 1.4), hue=0),
     torchvision.transforms.RandomHorizontalFlip(p=0.2),
 ])
+
+
+def get_image_list(data_root, split, limit=0, filelists_dir='filelists'):
+    filelist = []
+    filelists_path = os.path.join(filelists_dir, "{}.txt".format(split))
+
+    i = 0
+    with open(filelists_path) as f:
+        for line in f:
+            line = line.split('#')[0]
+            line = line.strip()
+            filelist.append(os.path.join(data_root, line))
+            i += 1
+            if limit > 0 and i > limit:
+                break
+
+    return filelist
+
 
 class Dataset(object):
     syncnet_T = hparams.syncnet_T
     syncnet_mel_step_size = hparams.syncnet_mel_step_size
 
     def __init__(self, split, data_root, inner_shuffle=True,
-        limit=-1, sampling_half_window_size_seconds=2.0,
-        unmask_fringe_width=10, img_augment=True):
+                 limit=0, sampling_half_window_size_seconds=2.0,
+                 unmask_fringe_width=10, img_augment=True,
+                 filelists_dir='filelists'):
         self.all_videos = list(filter(
-            lambda vidname: os.path.exists(join(vidname, "audio.wav")), get_image_list(data_root, split, limit=limit)))
+            lambda vidname: os.path.exists(join(vidname, "audio.wav")),
+            get_image_list(data_root, split, limit=limit, filelists_dir=filelists_dir)))
         self.img_names = {
-            vidname: sorted(glob(join(vidname, '*.png')), key=lambda name: int(os.path.basename(name).split('.')[0])) for vidname in self.all_videos
+            vidname: sorted(
+                glob(join(vidname, '*.png')),
+                key=lambda name: int(os.path.basename(name).split('.')[0])) for vidname in self.all_videos
         }
-        
+
         self.orig_mels = {}
         for vidname in tqdm(self.all_videos, desc="load mels"):
             mel_path = join(vidname, "mel.npy")
@@ -152,7 +167,8 @@ class Dataset(object):
         return x
 
     def mask_window(self, window):
-        window[:, :, (window.shape[2]//2):self.fringe_y2, self.fringe_x1:self.fringe_x2] = 0.
+        window[:, :, (window.shape[2]//2):self.fringe_y2,
+               self.fringe_x1:self.fringe_x2] = 0.
         return window
 
     def __len__(self):
@@ -183,7 +199,8 @@ class Wav2LipDataset(Dataset):
             if len(img_names) <= 3 * self.syncnet_T:
                 continue
 
-            img_name, wrong_img_name = self.sample_right_wrong_images(img_names)
+            img_name, wrong_img_name = self.sample_right_wrong_images(
+                img_names)
 
             while wrong_img_name == img_name:
                 wrong_img_name = random.choice(img_names)
@@ -211,8 +228,8 @@ class Wav2LipDataset(Dataset):
             if indiv_mels is None:
                 continue
 
-            window = self.prepare_window(window) # 3 x T x H x W
-            wrong_window = self.prepare_window(wrong_window) # 3 x T x H x W
+            window = self.prepare_window(window)  # 3 x T x H x W
+            wrong_window = self.prepare_window(wrong_window)  # 3 x T x H x W
             cat = np.concatenate([window, wrong_window], axis=1)
             cat = torch.FloatTensor(cat)
             if self.img_augment:
@@ -241,7 +258,8 @@ class SyncnetDataset(Dataset):
             if len(img_names) <= 3 * self.syncnet_T:
                 continue
 
-            img_name, wrong_img_name = self.sample_right_wrong_images(img_names)
+            img_name, wrong_img_name = self.sample_right_wrong_images(
+                img_names)
 
             while wrong_img_name == img_name:
                 wrong_img_name = random.choice(img_names)
@@ -281,10 +299,10 @@ class SyncnetDataset(Dataset):
             if (mel.shape[0] != self.syncnet_mel_step_size):
                 continue
 
-            x = self.prepare_window(window) # 3 x T x H x W
+            x = self.prepare_window(window)  # 3 x T x H x W
             x = x[:, :, x.shape[2]//2:]
             x = np.transpose(x, (1, 0, 2, 3))
-            x = torch.FloatTensor(x) # T x 3 x H x W
+            x = torch.FloatTensor(x)  # T x 3 x H x W
             if self.img_augment:
                 x = self.augment_window(x)
             shape = x.shape

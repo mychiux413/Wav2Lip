@@ -7,9 +7,9 @@ from glob import glob
 import torch
 
 sys.path.append('../')
-import audio
+from w2l.utils import audio
 import face_detection
-from models import Wav2Lip
+from w2l.models import Wav2Lip
 
 parser = argparse.ArgumentParser(description='Code to generate results on ReSyncED evaluation set')
 

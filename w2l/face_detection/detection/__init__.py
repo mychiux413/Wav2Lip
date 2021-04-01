@@ -1,0 +1,1 @@
+from w2l.face_detection.detection.core import FaceDetector
