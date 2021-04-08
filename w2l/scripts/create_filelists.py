@@ -168,7 +168,7 @@ def evaluate_datasets_losses(syncnet_checkpoint_path, img_size, data_root, epoch
     sync_model = SyncNet().to(device)
     checkpoint = torch.load(syncnet_checkpoint_path)
     sync_model.load_state_dict(checkpoint["state_dict"])
-    test_dataset = SyncnetDataset(data_root, only_true_image=True)
+    test_dataset = SyncnetDataset(data_root, only_true_image=True, img_size=hp.img_size)
     data_loader = data_utils.DataLoader(
         test_dataset, batch_size=hp.syncnet_batch_size,
         num_workers=hp.num_workers,
@@ -207,10 +207,10 @@ def main():
     parser.add_argument('--val_limit', type=int, required=False, default=0)
     parser.add_argument("--syncnet_checkpoint_path",
                         help='Load the pre-trained Expert discriminator', required=False, default=None)
-    parser.add_argument('--cosine_loss_mean_max',
-                        help='Pass the loss of datasets under specified mean value', default=4.75, type=float)
-    parser.add_argument('--cosine_loss_std_max',
-                        help='Pass the loss of datasets under specified std value', default=3.5, type=float)
+    parser.add_argument('--cosine_loss_mean_max_q',
+                        help='Pass the loss of datasets under specified mean quantile', default=0.9, type=float)
+    parser.add_argument('--cosine_loss_std_max_q',
+                        help='Pass the loss of datasets under specified std quantile', default=0.9, type=float)
     parser.add_argument('--cosine_loss_epoch',
                         help='Specify the epoch to evaluate cosine loss', default=10, type=int)
     parser.add_argument('--syncnet_img_size',
@@ -232,8 +232,15 @@ def main():
             args.data_root,
             args.cosine_loss_epoch,
         )
+        cosine_loss_mean_max = np.quantile([v[0] for v in stat_losses.values()], args.cosine_loss_mean_max_q)
+        cosine_loss_std_max = np.quantile([v[1] for v in stat_losses.values()], args.cosine_loss_std_max_q)
+        print("filter parameters:")
+        print("mean_max_q: {}, mean_max: {}, std_max_q: {}, std_max: {}".format(
+            args.cosine_loss_mean_max_q, cosine_loss_mean_max,
+            args.cosine_loss_std_max_q, cosine_loss_std_max,
+        ))
         for vidname, (mean_loss, std_loss) in stat_losses.items():
-            if mean_loss < args.cosine_loss_mean_max and std_loss < args.cosine_loss_std_max:
+            if mean_loss < cosine_loss_mean_max and std_loss < cosine_loss_std_max:
                 valid_vidnames.add(vidname)
 
     i_train = 0
