@@ -1,5 +1,5 @@
 import os
-from w2l import hparams
+from w2l.hparams import hparams
 import torch
 import torchvision
 from w2l.models.mobilefacenet import MobileFaceNet
@@ -15,8 +15,9 @@ def load_facenet_model():
     model = MobileFaceNet([112, 112], 136)
     checkpoint = torch.load(
         hparams.mobilefacenet_model_path,
-        map_location=map_location)
+        map_location=device)
     model.load_state_dict(checkpoint['state_dict'])
+    model = model.to(device)
     model = model.eval()
     return model
 

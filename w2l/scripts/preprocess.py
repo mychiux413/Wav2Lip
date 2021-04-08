@@ -3,7 +3,6 @@ import sys
 if sys.version_info[0] < 3 and sys.version_info[1] < 2:
     raise Exception("Must be using >= Python 3.2")
 
-from os import path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import argparse
@@ -17,13 +16,16 @@ from w2l.hparams import hparams as hp
 
 from w2l import face_detection
 from w2l.utils.stream import stream_video_as_batch
+from w2l.utils.facenet import load_facenet_model
+from w2l.utils.env import device
+import torch
 
 
 def process_video_file(vfile, args, gpu_id, fa):
     vidname = os.path.basename(vfile).split('.')[0]
     dirname = vfile.split('/')[-2]
 
-    fulldir = path.join(args.preprocessed_root, dirname, vidname)
+    fulldir = os.path.join(args.preprocessed_root, dirname, vidname)
     if os.path.exists(fulldir) and len(os.listdir(fulldir)) > 3 * hp.syncnet_T + 2:
         return
     os.makedirs(fulldir, exist_ok=True)
@@ -58,7 +60,7 @@ def process_video_file(vfile, args, gpu_id, fa):
             x1, y1, x2, y2 = f
             height = fb[j].shape[0]
             y2 = min(height, y2 + 20)  # add chin
-            cv2.imwrite(path.join(fulldir, '{}.png'.format(i)),
+            cv2.imwrite(os.path.join(fulldir, '{}.png'.format(i)),
                         fb[j][y1:y2, x1:x2])
 
 
@@ -66,15 +68,52 @@ def process_audio_file(vfile, args, template):
     vidname = os.path.basename(vfile).split('.')[0]
     dirname = vfile.split('/')[-2]
 
-    fulldir = path.join(args.preprocessed_root, dirname, vidname)
+    fulldir = os.path.join(args.preprocessed_root, dirname, vidname)
     os.makedirs(fulldir, exist_ok=True)
 
-    wavpath = path.join(fulldir, 'audio.wav')
+    wavpath = os.path.join(fulldir, 'audio.wav')
     if os.path.exists(wavpath):
         return
 
     command = template.format(vfile, wavpath)
     subprocess.call(command, shell=True)
+
+
+def process_mouth_position(model, args, vfile):
+    vidname = os.path.basename(vfile).split('.')[0]
+    dirname = vfile.split('/')[-2]
+    fulldir = os.path.join(args.preprocessed_root, dirname, vidname)
+    config_path = os.path.join(fulldir, "landmarks.npy")
+    # if os.path.exists(config_path):
+    #     return
+    config = {}
+
+    B = args.facenet_batch_size
+
+    img_batch = []
+    imgname_batch = []
+    fnames = os.listdir(fulldir)
+    fnames_len = len(fnames)
+    for i, fname in enumerate(fnames):
+        if not fname.endswith('.png'):
+            continue
+        path = os.path.join(fulldir, fname)
+        imgname_batch.append(fname)
+        img = cv2.imread(path)
+        img = cv2.resize(img, (112, 112))
+        img = (img / 255.).transpose((2, 0, 1))
+        img_batch.append(img)
+        imgname_batch.append(fname)
+        if len(img_batch) == B or i == fnames_len - 1:
+            x = np.array(img_batch)
+            x = torch.from_numpy(x).float()
+            landmarks = model(x.to(device))[0]
+            landmarks = landmarks.reshape(len(img_batch), -1, 2).cpu().numpy()
+            for i, landmark in enumerate(landmarks):
+                config[imgname_batch[i]] = landmark
+            img_batch = []
+            imgname_batch = []
+    np.save(config_path, config, allow_pickle=True)
 
 
 def mp_handler(job):
@@ -99,6 +138,8 @@ def main():
         "--data_root", help="Root folder of the LRS2 dataset", required=True)
     parser.add_argument("--preprocessed_root",
                         help="Root folder of the preprocessed dataset", required=True)
+    parser.add_argument(
+        '--facenet_batch_size', help='Batch size of facenet', default=16, type=int)
 
     args = parser.parse_args()
 
@@ -110,18 +151,28 @@ def main():
     print('Started processing for {} with {} GPUs'.format(
         args.data_root, args.ngpu))
 
-    filelist = glob(path.join(args.data_root, '*/*.mp4'))
+    filelist = glob(os.path.join(args.data_root, '*/*.mp4'))
 
-    jobs = [(vfile, args, i % args.ngpu, fa) for i, vfile in enumerate(filelist)]
+    jobs = [(vfile, args, i % args.ngpu, fa)
+            for i, vfile in enumerate(filelist)]
     p = ThreadPoolExecutor(args.ngpu)
     futures = [p.submit(mp_handler, j) for j in jobs]
     _ = [r.result() for r in tqdm(as_completed(futures), total=len(futures))]
 
-    print('Dumping audios...')
-
-    for vfile in tqdm(filelist):
+    for vfile in tqdm(filelist, desc="dump audio"):
         try:
             process_audio_file(vfile, args, template)
+        except KeyboardInterrupt:
+            exit(0)
+        except Exception as _:  # noqa: F841
+            traceback.print_exc()
+            continue
+
+    facenet_model = load_facenet_model()
+    for vfile in tqdm(filelist, desc="dump landmarks"):
+        try:
+            with torch.no_grad():
+                process_mouth_position(facenet_model, args, vfile)
         except KeyboardInterrupt:
             exit(0)
         except Exception as _:  # noqa: F841
