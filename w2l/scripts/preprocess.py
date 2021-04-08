@@ -84,36 +84,42 @@ def process_mouth_position(model, args, vfile):
     dirname = vfile.split('/')[-2]
     fulldir = os.path.join(args.preprocessed_root, dirname, vidname)
     config_path = os.path.join(fulldir, "landmarks.npy")
-    # if os.path.exists(config_path):
-    #     return
+    if os.path.exists(config_path):
+        return
     config = {}
-
-    B = args.facenet_batch_size
 
     img_batch = []
     imgname_batch = []
-    fnames = os.listdir(fulldir)
+    fnames = list(filter(lambda name: name.endswith('.png'), os.listdir(fulldir)))
     fnames_len = len(fnames)
     for i, fname in enumerate(fnames):
-        if not fname.endswith('.png'):
-            continue
         path = os.path.join(fulldir, fname)
-        imgname_batch.append(fname)
         img = cv2.imread(path)
         img = cv2.resize(img, (112, 112))
         img = (img / 255.).transpose((2, 0, 1))
         img_batch.append(img)
         imgname_batch.append(fname)
-        if len(img_batch) == B or i == fnames_len - 1:
+        if len(img_batch) == args.facenet_batch_size:
             x = np.array(img_batch)
             x = torch.from_numpy(x).float()
             landmarks = model(x.to(device))[0]
             landmarks = landmarks.reshape(len(img_batch), -1, 2).cpu().numpy()
-            for i, landmark in enumerate(landmarks):
-                config[imgname_batch[i]] = landmark
+            for j, landmark in enumerate(landmarks):
+                config[imgname_batch[j]] = landmark
             img_batch = []
             imgname_batch = []
+    if len(img_batch) > 0:
+        x = np.array(img_batch)
+        x = torch.from_numpy(x).float()
+        landmarks = model(x.to(device))[0]
+        landmarks = landmarks.reshape(len(img_batch), -1, 2).cpu().numpy()
+        for j, landmark in enumerate(landmarks):
+            config[imgname_batch[j]] = landmark
+
     np.save(config_path, config, allow_pickle=True)
+    assert len(config) == fnames_len, "dump len vs .png size: {} vs {}".format(
+        len(config), fnames_len,
+    )
 
 
 def mp_handler(job):
@@ -139,7 +145,7 @@ def main():
     parser.add_argument("--preprocessed_root",
                         help="Root folder of the preprocessed dataset", required=True)
     parser.add_argument(
-        '--facenet_batch_size', help='Batch size of facenet', default=16, type=int)
+        '--facenet_batch_size', help='Batch size of facenet', default=64, type=int)
 
     args = parser.parse_args()
 
