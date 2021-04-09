@@ -89,9 +89,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             optimizer.zero_grad()
             disc_optimizer.zero_grad()
 
-            g, generative_filter = model(indiv_mels, x)
-            mouth_g = g * generative_filter
-            mouth_gt = gt * generative_filter
+            g = model(indiv_mels, x)
 
             if hparams.syncnet_wt > 0.:
                 sync_loss = get_sync_loss(mel, g)
@@ -103,8 +101,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             else:
                 perceptual_loss = 0.
 
-            rec_loss = 0.2 * l1loss(g, gt) + \
-                0.8 * (0.14 * l1loss(mouth_g, mouth_gt) + ms_ssim_loss(mouth_g, mouth_gt) * 0.86) / torch.mean(generative_filter)
+            rec_loss = 0.14 * l1loss(g, gt) + ms_ssim_loss(g, gt) * 0.86
 
             loss = hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss + \
                 (1. - hparams.syncnet_wt - hparams.disc_wt) * rec_loss
@@ -198,9 +195,7 @@ def eval_model(test_data_loader, global_step, device, model, disc):
             disc_real_loss = F.binary_cross_entropy(
                 pred, torch.ones((len(pred), 1)).to(device))
 
-            g, generative_filter = model(indiv_mels, x)
-            mouth_g = g * generative_filter
-            mouth_gt = gt * generative_filter
+            g = model(indiv_mels, x)
 
             pred = disc(g)
             disc_fake_loss = F.binary_cross_entropy(
@@ -216,8 +211,7 @@ def eval_model(test_data_loader, global_step, device, model, disc):
             else:
                 perceptual_loss = 0.
 
-            rec_loss = 0.2 * (0.14 * l1loss(g, gt) + ms_ssim_loss(g, gt) * 0.86) + \
-                0.8 * (0.14 * l1loss(mouth_g, mouth_gt) + ms_ssim_loss(mouth_g, mouth_gt) * 0.86) / torch.mean(generative_filter)
+            rec_loss = 0.14 * l1loss(g, gt) + ms_ssim_loss(g, gt) * 0.86
 
             loss = hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss + \
                 (1. - hparams.syncnet_wt - hparams.disc_wt) * rec_loss

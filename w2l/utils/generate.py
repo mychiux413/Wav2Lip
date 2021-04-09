@@ -96,7 +96,8 @@ def datagen(config_path, mels, batch_size=128):
 
 
 def generate_video(face_config_path, audio_path, model_path, output_path, face_fps=25,
-                   batch_size=128, num_mels=80, mel_step_size=16, sample_rate=16000):
+                   batch_size=128, num_mels=80, mel_step_size=16, sample_rate=16000,
+                   output_fps=30, output_crf=0):
 
     assert os.path.exists(face_config_path)
     with open(face_config_path, 'r') as f:
@@ -138,6 +139,6 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
 
     out.release()
 
-    command = "ffmpeg -y -i '{}' -i '{}' -vf fps=30 -crf 0 -vcodec h264 -preset veryslow '{}'".format(
-        audio_path, 'temp/result.avi', output_path)
+    command = "ffmpeg -y -i '{}' -i '{}' -vf fps={} -crf {} -vcodec h264 -preset veryslow '{}'".format(
+        audio_path, 'temp/result.avi', output_fps, output_crf, output_path)
     subprocess.call(command, shell=platform.system() != 'Windows')

@@ -140,7 +140,7 @@ class Wav2Lip(nn.Module):
         self.output_block = nn.Sequential(Conv2d(80, 32, kernel_size=3, stride=1, padding=1),
             nn.Conv2d(32, 3, kernel_size=1, stride=1, padding=0),
             nn.Sigmoid())
-        self.unet = UNet(3, 1)
+        # self.unet = UNet(3, 1)
 
     def forward(self, audio_sequences, face_sequences):
         # face_sequences: (B, 6, T, H, W)
@@ -180,19 +180,19 @@ class Wav2Lip(nn.Module):
             x = torch.split(x, B, dim=0) # [(B, C, H, W)]
             outputs = torch.stack(x, dim=2) # (B, C, T, H, W)
 
-            generative_filter = self.unet(true_window)
-            generative_filter = torch.split(generative_filter, B, dim=0)
-            generative_filter = torch.stack(generative_filter, dim=2)
+            # generative_filter = self.unet(true_window)
+            # generative_filter = torch.split(generative_filter, B, dim=0)
+            # generative_filter = torch.stack(generative_filter, dim=2)
 
             true_window = torch.split(true_window, B, dim=0)
             true_window = torch.stack(true_window, dim=2)
 
         else:
             outputs = x
-            generative_filter = self.unet(true_window)
-        outputs = outputs * generative_filter + (1. - generative_filter) * true_window
+            # generative_filter = self.unet(true_window)
+        # outputs = outputs * generative_filter + (1. - generative_filter) * true_window
 
-        return outputs, generative_filter # (BxT, 3, img_size, img_size)
+        return outputs # (BxT, 3, img_size, img_size)
         # return outputs
 
 class Wav2Lip_disc_qual(nn.Module):
