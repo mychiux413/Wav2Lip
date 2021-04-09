@@ -167,7 +167,7 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
     video_stream.release()
     raw = open(face_config_path).read()
     with open(face_config_path, 'w') as f:
-        f.write('# fps={}\n'.format(int(fps)))
+        f.write('# fps={}\n'.format(fps))
         f.write(raw)
     # ******************************
 

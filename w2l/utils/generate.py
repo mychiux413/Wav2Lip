@@ -97,7 +97,7 @@ def datagen(config_path, mels, batch_size=128):
 
 def generate_video(face_config_path, audio_path, model_path, output_path, face_fps=25,
                    batch_size=128, num_mels=80, mel_step_size=16, sample_rate=16000,
-                   output_fps=30, output_crf=0):
+                   output_fps=None, output_crf=0):
 
     assert os.path.exists(face_config_path)
     with open(face_config_path, 'r') as f:
@@ -105,7 +105,9 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
         if firstline.startswith('#'):
             splits = firstline.split('fps=')
             if len(splits) > 1:
-                face_fps = int(splits[1].strip())
+                face_fps = float(splits[1].strip())
+    if output_fps is None:
+        output_fps = face_fps
 
     mels = to_mels(
         audio_path, face_fps,
