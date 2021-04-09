@@ -12,6 +12,7 @@ from w2l.utils import audio
 from tqdm import tqdm
 from glob import glob
 import cv2
+from functools import partial
 
 
 class SyncnetDataset(Dataset):
@@ -168,7 +169,8 @@ def evaluate_datasets_losses(syncnet_checkpoint_path, img_size, data_root, epoch
     sync_model = SyncNet().to(device)
     checkpoint = torch.load(syncnet_checkpoint_path)
     sync_model.load_state_dict(checkpoint["state_dict"])
-    test_dataset = SyncnetDataset(data_root, only_true_image=True, img_size=hp.img_size)
+    test_dataset = SyncnetDataset(
+        data_root, only_true_image=True, img_size=hp.img_size)
     data_loader = data_utils.DataLoader(
         test_dataset, batch_size=hp.syncnet_batch_size,
         num_workers=hp.num_workers,
@@ -198,6 +200,19 @@ def evaluate_datasets_losses(syncnet_checkpoint_path, img_size, data_root, epoch
     return stat_losses
 
 
+def to_sorted_stats_landmarks(tup, delta=True):
+    path, dic = tup
+    values = []
+    for k, v in sorted(dic.items(), key=lambda item: int(item[0].split('.')[0])):
+        values.append(v)
+    rows = np.array(values)
+    if delta:
+        rows = np.diff(rows, axis=0)
+    mean = np.mean(rows, axis=0)
+    std = np.std(rows, axis=0)
+    return path, np.stack([mean, std], axis=-1)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_root', type=str, required=True)
@@ -211,6 +226,12 @@ def main():
                         help='Pass the loss of datasets under specified mean quantile', default=0.9, type=float)
     parser.add_argument('--cosine_loss_std_max_q',
                         help='Pass the loss of datasets under specified std quantile', default=0.9, type=float)
+    parser.add_argument('--lip_mean_cut_q',
+                        help='', default=0.9, type=float)
+    parser.add_argument('--lip_std_cut_q',
+                        help='', default=0.9, type=float)
+    parser.add_argument('--filter_outbound_lip',
+                        help='', action='store_true')
     parser.add_argument('--cosine_loss_epoch',
                         help='Specify the epoch to evaluate cosine loss', default=10, type=int)
     parser.add_argument('--syncnet_img_size',
@@ -232,8 +253,10 @@ def main():
             args.data_root,
             args.cosine_loss_epoch,
         )
-        cosine_loss_mean_max = np.quantile([v[0] for v in stat_losses.values()], args.cosine_loss_mean_max_q)
-        cosine_loss_std_max = np.quantile([v[1] for v in stat_losses.values()], args.cosine_loss_std_max_q)
+        cosine_loss_mean_max = np.quantile(
+            [v[0] for v in stat_losses.values()], args.cosine_loss_mean_max_q)
+        cosine_loss_std_max = np.quantile(
+            [v[1] for v in stat_losses.values()], args.cosine_loss_std_max_q)
         print("filter parameters:")
         print("mean_max_q: {}, mean_max: {}, std_max_q: {}, std_max: {}".format(
             args.cosine_loss_mean_max_q, cosine_loss_mean_max,
@@ -242,6 +265,36 @@ def main():
         for vidname, (mean_loss, std_loss) in stat_losses.items():
             if mean_loss < cosine_loss_mean_max and std_loss < cosine_loss_std_max:
                 valid_vidnames.add(vidname)
+
+    if args.filter_outbound_lip:
+        land_paths = glob(os.path.join(args.data_root, "**/**/landmarks.npy"))
+        path_landmarks = list(filter(lambda item: len(item[1]) > 0, [
+            (os.path.dirname(path), np.load(path, allow_pickle=True).tolist()) for path in land_paths]))
+        stats_diff = {k: v for k, v in map(
+            to_sorted_stats_landmarks, path_landmarks)}
+        # {'dirpath': Array(68, [x, y], [mean, std])}
+
+        stats = {k: v for k, v in map(
+            partial(to_sorted_stats_landmarks, delta=False), path_landmarks)}
+        mid_lip_stats_diff = np.array(list(stats_diff.values()))[:, 52, :, :]
+        mid_lip_stats = np.array(list(stats.values()))[:, 52, :, :]
+        max_mean_x_diff = np.quantile(
+            mid_lip_stats_diff[:, 0, 0], q=args.lip_mean_cut_q)
+        max_std_x_diff = np.quantile(
+            mid_lip_stats_diff[:, 0, 1], q=args.lip_mean_cut_q)
+        min_mean_x = np.quantile(mid_lip_stats[:, 0, 0], q=(
+            1.0 - args.lip_mean_cut_q) / 2.0)
+        max_mean_x = np.quantile(
+            mid_lip_stats[:, 0, 0], q=1.0 - (1.0 - args.lip_mean_cut_q) / 2.0)
+        max_std_x = np.quantile(mid_lip_stats[:, 0, 1], q=args.lip_mean_cut_q)
+        print("filter_outbound_lip parameter:")
+        print(
+            "max_mean_x_diff:", max_mean_x_diff,
+            "max_std_x_diff", max_std_x_diff,
+            "min_mean_x", min_mean_x,
+            "max_mean_x", max_mean_x,
+            "max_std_x", max_std_x,
+        )
 
     i_train = 0
     i_val = 0
@@ -252,6 +305,20 @@ def main():
         if not os.path.isdir(dirpath):
             continue
         for dataname in os.listdir(dirpath):
+            dataname_path = os.path.join(dirpath, dataname)
+            if args.filter_outbound_lip:
+                if dataname_path not in stats_diff:
+                    continue
+                if stats_diff[dataname_path][52, 0, 0] > max_mean_x_diff:
+                    continue
+                if stats_diff[dataname_path][52, 0, 1] > max_std_x_diff:
+                    continue
+                if stats[dataname_path][52, 0, 0] < min_mean_x:
+                    continue
+                if stats[dataname_path][52, 0, 0] > max_mean_x:
+                    continue
+                if stats[dataname_path][52, 0, 1] > max_std_x:
+                    continue
             line = os.path.join(dirname, dataname)
             if args.syncnet_checkpoint_path is not None:
                 if line not in valid_vidnames:
