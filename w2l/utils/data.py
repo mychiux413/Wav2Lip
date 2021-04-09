@@ -14,7 +14,6 @@ from w2l.hparams import hparams
 import torchvision
 
 augment = torchvision.transforms.Compose([
-    torchvision.transforms.RandomGrayscale(0.1),
     torchvision.transforms.ColorJitter(brightness=(
         0.6, 1.4), contrast=(0.6, 1.4), saturation=(0.6, 1.4), hue=0),
     torchvision.transforms.RandomHorizontalFlip(p=0.2),
@@ -95,6 +94,11 @@ class Dataset(object):
         self.fringe_y2 = hparams.img_size - self.unmask_fringe_width
         assert self.fringe_y2 > hparams.img_size // 2
         self.img_augment = img_augment
+        if not self.inner_shuffle:
+            self.data_len = len(self.all_videos)
+        else:
+            self.data_len = sum([len(names) for _, names in self.img_names.items()]) // hparams.syncnet_T
+        print("data length: ", self.data_len)
 
     def get_vidname(self, idx):
         if self.inner_shuffle:
@@ -208,9 +212,7 @@ class Dataset(object):
         return window
 
     def __len__(self):
-        if not self.inner_shuffle:
-            return len(self.all_videos)
-        return sum([len(names) for _, names in self.img_names.items()])
+        return self.data_len
 
     def sample_right_wrong_images(self, img_names):
         imgs_len = len(img_names)

@@ -88,17 +88,14 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             indiv_mels = indiv_mels.to(device)
             gt = gt.to(device)
 
-            g, generative_filter = model(indiv_mels, x)
-            mouth_g = g * generative_filter
-            mouth_gt = gt * generative_filter
+            g = model(indiv_mels, x)
 
             if hparams.syncnet_wt > 0.:
                 sync_loss = get_sync_loss(mel, g)
             else:
                 sync_loss = 0.
 
-            rec_loss = 0.2 * (0.14 * l1loss(g, gt) + ms_ssim_loss(g, gt) * 0.86) + \
-                0.8 * (0.14 * l1loss(mouth_g, mouth_gt) + ms_ssim_loss(mouth_g, mouth_gt) * 0.86) / torch.mean(generative_filter)
+            rec_loss = 0.14 * l1loss(g, gt) + ms_ssim_loss(g, gt) * 0.86
 
             loss = hparams.syncnet_wt * sync_loss + \
                 (1 - hparams.syncnet_wt) * rec_loss
@@ -159,13 +156,10 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
             indiv_mels = indiv_mels.to(device)
             mel = mel.to(device)
 
-            g, generative_filter = model(indiv_mels, x)
-            mouth_g = g * generative_filter
-            mouth_gt = gt * generative_filter
+            g = model(indiv_mels, x)
 
             sync_loss = get_sync_loss(mel, g)
-            rec_loss = 0.2 * (0.14 * l1loss(g, gt) + ms_ssim_loss(g, gt) * 0.86) + \
-                0.8 * (0.14 * l1loss(mouth_g, mouth_gt) + ms_ssim_loss(mouth_g, mouth_gt) * 0.86) / torch.mean(generative_filter)
+            rec_loss = 0.14 * l1loss(g, gt) + ms_ssim_loss(g, gt) * 0.86
             loss = hparams.syncnet_wt * sync_loss + \
                 (1 - hparams.syncnet_wt) * rec_loss
 

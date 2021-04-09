@@ -42,13 +42,14 @@ class Wav2Lip(nn.Module):
                 last_face_y_size = evaluate_new_size_after_conv(last_face_y_size, 3, 2, 1)
                 face_encoder_channels.append(channels * 2)
             elif i == n_layers - 2:
+                double_channels = min(512, channels * 2)
                 sequentials.append(
-                    nn.Sequential(Conv2d(channels, channels * 2, kernel_size=3, stride=2, padding=1),
-                    Conv2d(channels * 2, channels * 2, kernel_size=3, stride=1, padding=1, residual=True))
+                    nn.Sequential(Conv2d(channels, double_channels, kernel_size=3, stride=2, padding=1),
+                    Conv2d(double_channels, double_channels, kernel_size=3, stride=1, padding=1, residual=True))
                 )
                 last_face_x_size = evaluate_new_size_after_conv(last_face_x_size, 3, 2, 1)
                 last_face_y_size = evaluate_new_size_after_conv(last_face_y_size, 3, 2, 1)
-                face_encoder_channels.append(channels * 2)
+                face_encoder_channels.append(double_channels)
             elif i == n_layers - 1:
                 estimate = evaluate_new_size_after_conv(evaluate_new_size_after_conv(last_face_x_size, 3, 1, 0), 1, 1, 0)
                 
@@ -84,7 +85,8 @@ class Wav2Lip(nn.Module):
                 last_face_x_size = evaluate_new_size_after_conv(last_face_x_size, 3, 2, 1)
                 last_face_y_size = evaluate_new_size_after_conv(last_face_y_size, 3, 2, 1)
                 face_encoder_channels.append(channels * 2)
-            channels *= 2
+            if i < n_layers - 1: 
+                channels = min(512, channels * 2)
             
             print("[wav2lip] face_encoder_blocks x, y", last_face_x_size, last_face_y_size)
         assert last_face_x_size == 1
@@ -92,12 +94,12 @@ class Wav2Lip(nn.Module):
 
         self.face_encoder_blocks = nn.ModuleList(sequentials)
 
-        face_final_channels = channels // 2
-        audio_layers = int(np.log(face_final_channels) / np.log(2) - 4)
+        face_final_channels = channels
+        audio_layers = n_layers - 2
 
         self.audio_encoder, audio_shapes = create_audio_encoder(audio_layers, hp.batch_size, for_wav2lip=True)
         print("[wav2lip] review audio_encoder shapes")
-        print("[wav2lip] face_final_channels after encode", face_final_channels)
+        # print("[wav2lip] face_final_channels after encode", face_final_channels)
         print("[wav2lip] face encoder block channels", face_encoder_channels)
         print("[wav2lip] audio_shapes")
         print(*audio_shapes, sep='\n')
@@ -111,7 +113,7 @@ class Wav2Lip(nn.Module):
         last_face_y_size = 1
 
         rev_face_encoder_blocks_channels = list(reversed(face_encoder_channels))
-        FIXED_OUTPUT_CHANNELS = [64, 128, 256, 384, 512, 1024, 2048]
+        FIXED_OUTPUT_CHANNELS = [64, 128, 256, 384, 512, 512, 512]
         required_output_channels = FIXED_OUTPUT_CHANNELS[:(n_layers - 2)]
         required_output_channels += [required_output_channels[-1]] * 2
         required_output_channels = list(reversed(required_output_channels))
@@ -201,7 +203,7 @@ class Wav2Lip_disc_qual(nn.Module):
 
         n_layers = evaluate_conv_layers(hp.img_size) + 1
         sequentials = []
-        FIXED_OUTPUT_CHANNELS = [32, 64, 128, 256, 512, 1024, 2048]
+        FIXED_OUTPUT_CHANNELS = [32, 64, 128, 256, 512, 512, 512]
         required_output_channels = FIXED_OUTPUT_CHANNELS[:(n_layers - 2)]
         required_output_channels += [required_output_channels[-1]] * 2
 

@@ -41,22 +41,22 @@ class SyncNet_color(nn.Module):
                 last_face_y_size = evaluate_new_size_after_conv(last_face_y_size, 1, 1, 0)
                 
             else:
-                sequentials.append(Conv2d(channels, channels * 2, kernel_size=3, stride=2, padding=1))
+                double_channels = min(512, channels * 2)
+                sequentials.append(Conv2d(channels, double_channels, kernel_size=3, stride=2, padding=1))
                 last_face_x_size = evaluate_new_size_after_conv(last_face_x_size, 3, 2, 1)
                 last_face_y_size = evaluate_new_size_after_conv(last_face_y_size, 3, 2, 1)
 
-                sequentials.append(Conv2d(channels * 2, channels * 2, kernel_size=3, stride=1, padding=1, residual=True))
-                sequentials.append(Conv2d(channels * 2, channels * 2, kernel_size=3, stride=1, padding=1, residual=True))
+                sequentials.append(Conv2d(double_channels, double_channels, kernel_size=3, stride=1, padding=1, residual=True))
+                sequentials.append(Conv2d(double_channels, double_channels, kernel_size=3, stride=1, padding=1, residual=True))
                 if i == 2:
-                    sequentials.append(Conv2d(channels * 2, channels * 2, kernel_size=3, stride=1, padding=1, residual=True))
+                    sequentials.append(Conv2d(double_channels, double_channels, kernel_size=3, stride=1, padding=1, residual=True))
             print("[syncnet] face_encoder x, y", last_face_x_size, last_face_y_size)
-            channels *= 2
+            channels = min(512, channels * 2)
         assert last_face_x_size == 1, last_face_x_size
         assert last_face_y_size == 1, last_face_y_size
         self.face_encoder = nn.Sequential(*sequentials)
 
-        face_final_channels = channels // 2
-        audio_layers = int(np.log(face_final_channels) / np.log(2) - 4)
+        audio_layers = n_layers - 1
 
         self.audio_encoder, audio_shapes = create_audio_encoder(audio_layers, hp.syncnet_batch_size)
         print("[syncnet] review audio_encoder shapes")

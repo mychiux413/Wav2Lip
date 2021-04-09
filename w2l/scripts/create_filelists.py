@@ -13,6 +13,7 @@ from tqdm import tqdm
 from glob import glob
 import cv2
 from functools import partial
+from PIL import Image
 
 
 class SyncnetDataset(Dataset):
@@ -200,6 +201,12 @@ def evaluate_datasets_losses(syncnet_checkpoint_path, img_size, data_root, epoch
     return stat_losses
 
 
+def get_min_img_size(path):
+    with Image.open(path) as im:
+        width, height = im.size
+    return min(width, height)
+
+
 def to_sorted_stats_landmarks(tup, delta=True):
     path, dic = tup
     values = []
@@ -236,6 +243,8 @@ def main():
                         help='Specify the epoch to evaluate cosine loss', default=10, type=int)
     parser.add_argument('--syncnet_img_size',
                         help='Image Size of Syncnet', default=96, type=int)
+    parser.add_argument('--min_img_size',
+                        help='', default=0, type=int)
     parser.add_argument('--filelists_dir',
                         help='Specify filelists directory', type=str, default='filelists')
 
@@ -304,7 +313,7 @@ def main():
         dirpath = os.path.join(args.data_root, dirname)
         if not os.path.isdir(dirpath):
             continue
-        for dataname in os.listdir(dirpath):
+        for dataname in tqdm(os.listdir(dirpath), desc="[{}] draw and filter".format(dirname)):
             dataname_path = os.path.join(dirpath, dataname)
             if args.filter_outbound_lip:
                 if dataname_path not in stats_diff:
@@ -322,6 +331,18 @@ def main():
             line = os.path.join(dirname, dataname)
             if args.syncnet_checkpoint_path is not None:
                 if line not in valid_vidnames:
+                    continue
+            if args.min_img_size > 0:
+                paths = []
+                for fname in os.listdir(dataname_path):
+                    if not fname.endswith('.png'):
+                        continue
+                    path = os.path.join(dataname_path, fname)
+                    paths.append(path)
+                samples = np.random.choice(paths, min(len(paths), 64), replace=False)
+                sizes = list(map(get_min_img_size, samples))
+                min_size = min(sizes)
+                if min_size < args.min_img_size:
                     continue
             if np.random.rand() < args.train_ratio:
                 train_lines.append(line)
