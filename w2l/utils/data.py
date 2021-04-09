@@ -181,6 +181,7 @@ class Dataset(object):
         fnames = list(map(os.path.basename, window_fnames))
         landmarks = [self.landmarks[vidname][fname] for fname in fnames]
         img_size = hparams.img_size
+        half_img_size = int(img_size / 2)
         for i, landmark in enumerate(landmarks):
             mouth_landmark = landmark[49:]
             mouth_x1 = min(mouth_landmark[:, 0]) * img_size
@@ -193,7 +194,7 @@ class Dataset(object):
                            hparams.expand_mouth_width_ratio - 5))
             mouth_x2 = min(img_size, int(
                 mouth_x2 + mouth_width * hparams.expand_mouth_width_ratio + 5))
-            mouth_y1 = max(0, int(mouth_y1 - mouth_height *
+            mouth_y1 = max(half_img_size, int(mouth_y1 - mouth_height *
                            hparams.expand_mouth_height_ratio - 5))
             mouth_y2 = min(img_size, int(
                 mouth_y2 + mouth_height * hparams.expand_mouth_height_ratio + 5))
