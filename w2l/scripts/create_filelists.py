@@ -247,12 +247,15 @@ def main():
                         help='', default=0, type=int)
     parser.add_argument('--filelists_dir',
                         help='Specify filelists directory', type=str, default='filelists')
+    parser.add_argument('--include_train_dirs',
+                        help='for dirs into training datasets with comma seperated', default="", type=str)
 
     args = parser.parse_args()
 
     assert os.path.exists(args.data_root)
     assert args.train_ratio < 1.0
     assert args.train_ratio > 0.0
+    include_train_dirs = args.include_train_dirs.split(",")
 
     valid_vidnames = set()
     if args.syncnet_checkpoint_path is not None:
@@ -312,6 +315,12 @@ def main():
     for dirname in os.listdir(args.data_root):
         dirpath = os.path.join(args.data_root, dirname)
         if not os.path.isdir(dirpath):
+            continue
+        if dirname in include_train_dirs:
+            print("force dir {} into training datasets".format(dirname))
+            for dataname in tqdm(os.listdir(dirpath), desc="[{}] draw".format(dirname)):
+                line = os.path.join(dirname, dataname)
+                train_lines.append(line)
             continue
         for dataname in tqdm(os.listdir(dirpath), desc="[{}] draw and filter".format(dirname)):
             dataname_path = os.path.join(dirpath, dataname)
