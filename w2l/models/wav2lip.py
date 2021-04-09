@@ -7,6 +7,7 @@ import numpy as np
 
 from w2l.models.conv import Conv2dTranspose, Conv2d, nonorm_Conv2d, evaluate_conv_layers, evaluate_new_size_after_conv, create_audio_encoder
 from w2l.models.conv import evaluate_new_size_after_transpose_conv
+from w2l.models.unet import UNet
 
 class Wav2Lip(nn.Module):
     def __init__(self):
@@ -138,10 +139,12 @@ class Wav2Lip(nn.Module):
 
         self.output_block = nn.Sequential(Conv2d(80, 32, kernel_size=3, stride=1, padding=1),
             nn.Conv2d(32, 3, kernel_size=1, stride=1, padding=0),
-            nn.Sigmoid()) 
+            nn.Sigmoid())
+        self.unet = UNet(3, 1)
 
     def forward(self, audio_sequences, face_sequences):
-        # audio_sequences = (B, T, 1, 80, 16)
+        # face_sequences: (B, 6, T, H, W)
+        # audio_sequences: (B, T, 1, 80, 16)
         B = audio_sequences.size(0)
 
         input_dim_size = len(face_sequences.size())
@@ -149,6 +152,8 @@ class Wav2Lip(nn.Module):
             audio_sequences = torch.cat([audio_sequences[:, i] for i in range(audio_sequences.size(1))], dim=0)
             face_sequences = torch.cat([face_sequences[:, :, i] for i in range(face_sequences.size(2))], dim=0)
 
+        # face_sequences: (B x T, 6, H, W)
+        true_window = face_sequences[:, :3, :, :]
         audio_embedding = self.audio_encoder(audio_sequences) # B, 512, 1, 1
 
         feats = []
@@ -175,10 +180,20 @@ class Wav2Lip(nn.Module):
             x = torch.split(x, B, dim=0) # [(B, C, H, W)]
             outputs = torch.stack(x, dim=2) # (B, C, T, H, W)
 
+            generative_filter = self.unet(true_window)
+            generative_filter = torch.split(generative_filter, B, dim=0)
+            generative_filter = torch.stack(generative_filter, dim=2)
+
+            true_window = torch.split(true_window, B, dim=0)
+            true_window = torch.stack(true_window, dim=2)
+
         else:
             outputs = x
-            
-        return outputs # (BxT, 3, img_size, img_size)
+            generative_filter = self.unet(true_window)
+        outputs = outputs * generative_filter + (1. - generative_filter) * true_window
+
+        return outputs, generative_filter # (BxT, 3, img_size, img_size)
+        # return outputs
 
 class Wav2Lip_disc_qual(nn.Module):
     def __init__(self):

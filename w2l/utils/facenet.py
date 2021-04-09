@@ -7,10 +7,6 @@ from w2l.utils.env import device
 
 
 def load_facenet_model():
-    if torch.cuda.is_available():
-        def map_location(storage, loc): return storage.cuda()
-    else:
-        map_location = 'cpu'
     assert os.path.exists(hparams.mobilefacenet_model_path)
     model = MobileFaceNet([112, 112], 136)
     checkpoint = torch.load(

@@ -14,6 +14,7 @@ from w2l.utils.data import Wav2LipDataset
 from w2l.utils.env import use_cuda, device
 from w2l.models import SyncNet_color as SyncNet
 from w2l.models import Wav2Lip, Wav2Lip_disc_qual
+from w2l.utils.loss import ms_ssim_loss
 
 global_step = 0
 global_epoch = 0
@@ -51,7 +52,7 @@ def cosine_loss(a, v, y):
     return loss
 
 
-recon_loss = nn.L1Loss()
+l1loss = nn.L1Loss()
 
 
 def get_sync_loss(mel, g):
@@ -70,7 +71,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
     while global_epoch < nepochs:
         print('Starting Epoch: {}'.format(global_epoch))
-        running_sync_loss, running_l1_loss, running_perceptual_loss = 0., 0., 0.
+        running_sync_loss, running_rec_loss, running_perceptual_loss = 0., 0., 0.
         running_disc_real_loss, running_disc_fake_loss, running_target_loss = 0., 0., 0.
         prog_bar = tqdm(enumerate(train_data_loader))
         for step, (x, indiv_mels, mel, gt) in prog_bar:
@@ -88,7 +89,9 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             optimizer.zero_grad()
             disc_optimizer.zero_grad()
 
-            g = model(indiv_mels, x)
+            g, generative_filter = model(indiv_mels, x)
+            mouth_g = g * generative_filter
+            mouth_gt = gt * generative_filter
 
             if hparams.syncnet_wt > 0.:
                 sync_loss = get_sync_loss(mel, g)
@@ -100,10 +103,11 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             else:
                 perceptual_loss = 0.
 
-            l1loss = recon_loss(g, gt)
+            rec_loss = 0.2 * l1loss(g, gt) + \
+                0.8 * (0.14 * l1loss(mouth_g, mouth_gt) + ms_ssim_loss(mouth_g, mouth_gt) * 0.86) / torch.mean(generative_filter)
 
             loss = hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss + \
-                (1. - hparams.syncnet_wt - hparams.disc_wt) * l1loss
+                (1. - hparams.syncnet_wt - hparams.disc_wt) * rec_loss
 
             loss.backward()
             optimizer.step()
@@ -134,7 +138,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             # cur_session_steps = global_step - resumed_step
 
             running_target_loss += loss.item()
-            running_l1_loss += l1loss.item()
+            running_rec_loss += rec_loss.item()
             if hparams.syncnet_wt > 0.:
                 running_sync_loss += sync_loss.item()
             else:
@@ -156,13 +160,13 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                     average_sync_loss = eval_model(
                         test_data_loader, global_step, device, model, disc)
 
-                    if average_sync_loss < .75:
+                    if average_sync_loss < .55:
                         hparams.set_hparam('syncnet_wt', 0.03)
 
             next_step = step + 1
             prog_bar.set_description(
-                'L1: {:04f}, Sync: {:04f}, Percep: {:04f} | Fake: {:04f}, Real: {:04f} | Target: {:04f}'.format(
-                    running_l1_loss / next_step,
+                'Rec: {:04f}, Sync: {:04f}, Percep: {:04f} | Fake: {:04f}, Real: {:04f} | Target: {:04f}'.format(
+                    running_rec_loss / next_step,
                     running_sync_loss / next_step,
                     running_perceptual_loss / next_step,
                     running_disc_fake_loss / next_step,
@@ -176,7 +180,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 def eval_model(test_data_loader, global_step, device, model, disc):
     eval_steps = 300
     print('Evaluating for {} steps'.format(eval_steps))
-    running_sync_loss, running_l1_loss, running_disc_real_loss, \
+    running_sync_loss, recon_losses, running_disc_real_loss, \
         running_disc_fake_loss, running_perceptual_loss, running_target_loss = [], [], [], [], [], []
     while 1:
         for step, (x, indiv_mels, mel, gt) in enumerate((test_data_loader)):
@@ -194,7 +198,10 @@ def eval_model(test_data_loader, global_step, device, model, disc):
             disc_real_loss = F.binary_cross_entropy(
                 pred, torch.ones((len(pred), 1)).to(device))
 
-            g = model(indiv_mels, x)
+            g, generative_filter = model(indiv_mels, x)
+            mouth_g = g * generative_filter
+            mouth_gt = gt * generative_filter
+
             pred = disc(g)
             disc_fake_loss = F.binary_cross_entropy(
                 pred, torch.zeros((len(pred), 1)).to(device))
@@ -209,13 +216,14 @@ def eval_model(test_data_loader, global_step, device, model, disc):
             else:
                 perceptual_loss = 0.
 
-            l1loss = recon_loss(g, gt)
+            rec_loss = 0.2 * (0.14 * l1loss(g, gt) + ms_ssim_loss(g, gt) * 0.86) + \
+                0.8 * (0.14 * l1loss(mouth_g, mouth_gt) + ms_ssim_loss(mouth_g, mouth_gt) * 0.86) / torch.mean(generative_filter)
 
             loss = hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss + \
-                (1. - hparams.syncnet_wt - hparams.disc_wt) * l1loss
+                (1. - hparams.syncnet_wt - hparams.disc_wt) * rec_loss
 
             running_target_loss.append(loss.item())
-            running_l1_loss.append(l1loss.item())
+            recon_losses.append(rec_loss.item())
             running_sync_loss.append(sync_loss.item())
 
             if hparams.disc_wt > 0.:
@@ -226,8 +234,8 @@ def eval_model(test_data_loader, global_step, device, model, disc):
             if step > eval_steps:
                 break
 
-        print('L1: {:04f}, Sync: {:04f}, Percep: {:04f} | Fake: {:04f}, Real: {:04f} | Target: {:04f}'.format(
-            np.mean(running_l1_loss),
+        print('Rec: {:04f}, Sync: {:04f}, Percep: {:04f} | Fake: {:04f}, Real: {:04f} | Target: {:04f}'.format(
+            np.mean(recon_losses),
             np.mean(running_sync_loss),
             np.mean(running_perceptual_loss),
             np.mean(running_disc_fake_loss),

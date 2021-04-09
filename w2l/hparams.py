@@ -81,10 +81,10 @@ hparams = HParams(
     fmax=7600,  # To be increased/reduced depending on data.
 
     ###################### Our training parameters #################################
-    img_size=96,  # 96 or 192
+    img_size=192,  # 96 or 192
     fps=30,
 
-    batch_size=8,
+    batch_size=4,
     initial_learning_rate=5e-5,
     opt_amsgrad=True,
     opt_weight_decay=0.0,
@@ -99,19 +99,24 @@ hparams = HParams(
     unmask_fringe_width=5,
     img_augment=True,
 
+    # mobilefacenet
+    mobilefacenet_model_path='checkpoints/mobilefacenet_model_best.pth.tar',
+    expand_mouth_width_ratio=0.6,
+    expand_mouth_height_ratio=0.7,
+
     # is initially zero, will be set automatically to 0.03 later. Leads to faster convergence.
     syncnet_wt=0.0,
-    syncnet_batch_size=64,
+    syncnet_batch_size=128,
     syncnet_lr=5e-6,
     syncnet_eval_interval=20000,
     syncnet_checkpoint_interval=20000,
-    syncnet_T=5,
+    syncnet_T=6,
     syncnet_mel_step_size=16,
     syncnet_opt_amsgrad=True,
     syncnet_opt_weight_decay=0.0,
 
     disc_wt=0.07,
-    disc_initial_learning_rate=1e-6,
+    disc_initial_learning_rate=5e-5,
     disc_opt_amsgrad=True,
     disc_opt_weight_decay=0.0,
 )

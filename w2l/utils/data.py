@@ -41,6 +41,7 @@ def get_image_list(data_root, split, limit=0, filelists_dir='filelists'):
 class Dataset(object):
     syncnet_T = hparams.syncnet_T
     syncnet_mel_step_size = hparams.syncnet_mel_step_size
+    use_landmarks = True
 
     def __init__(self, split, data_root, inner_shuffle=True,
                  limit=0, sampling_half_window_size_seconds=2.0,
@@ -54,6 +55,11 @@ class Dataset(object):
                 glob(join(vidname, '*.png')),
                 key=lambda name: int(os.path.basename(name).split('.')[0])) for vidname in self.all_videos
         }
+        self.landmarks = None
+        if self.use_landmarks:
+            self.landmarks = {
+                vidname: np.load(join(vidname, "landmarks.npy"), allow_pickle=True).tolist() for vidname in self.all_videos
+            }
 
         self.orig_mels = {}
         for vidname in tqdm(self.all_videos, desc="load mels"):
@@ -171,6 +177,35 @@ class Dataset(object):
                self.fringe_x1:self.fringe_x2] = 0.
         return window
 
+    def mask_mouth(self, window, vidname, window_fnames, reverse=False):
+        fnames = list(map(os.path.basename, window_fnames))
+        landmarks = [self.landmarks[vidname][fname] for fname in fnames]
+        img_size = hparams.img_size
+        for i, landmark in enumerate(landmarks):
+            mouth_landmark = landmark[49:]
+            mouth_x1 = min(mouth_landmark[:, 0]) * img_size
+            mouth_x2 = max(mouth_landmark[:, 0]) * img_size
+            mouth_y1 = min(mouth_landmark[:, 1]) * img_size
+            mouth_y2 = max(mouth_landmark[:, 1]) * img_size
+            mouth_width = mouth_x2 - mouth_x1
+            mouth_height = mouth_y2 - mouth_y1
+            mouth_x1 = max(0, int(mouth_x1 - mouth_width *
+                           hparams.expand_mouth_width_ratio - 5))
+            mouth_x2 = min(img_size, int(
+                mouth_x2 + mouth_width * hparams.expand_mouth_width_ratio + 5))
+            mouth_y1 = max(0, int(mouth_y1 - mouth_height *
+                           hparams.expand_mouth_height_ratio - 5))
+            mouth_y2 = min(img_size, int(
+                mouth_y2 + mouth_height * hparams.expand_mouth_height_ratio + 5))
+            if reverse:
+                mask = torch.zeros((1, img_size, img_size))
+                mask[:, mouth_y1:mouth_y2, mouth_x1:mouth_x2] = 1.
+                window[:, i, :, :] *= mask
+            else:
+                window[:, i, mouth_y1:mouth_y2, mouth_x1:mouth_x2] = 0.
+
+        return window
+
     def __len__(self):
         if not self.inner_shuffle:
             return len(self.all_videos)
@@ -191,7 +226,6 @@ class Dataset(object):
 
 
 class Wav2LipDataset(Dataset):
-
     def __getitem__(self, idx):
         while 1:
             vidname = self.get_vidname(idx)
@@ -240,8 +274,11 @@ class Wav2LipDataset(Dataset):
             wrong_window = cat[:, self.syncnet_T:, :, :]
             window = cat[:, :self.syncnet_T, :, :]
             y = window.clone()
-            window = self.mask_window(window)
+            # window = self.mask_window(window)
 
+            window = self.mask_mouth(window, vidname, window_fnames)
+            wrong_window = self.mask_mouth(
+                wrong_window, vidname, wrong_window_fnames, reverse=True)
             x = torch.cat([window, wrong_window], axis=0)
 
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
@@ -250,6 +287,7 @@ class Wav2LipDataset(Dataset):
 
 
 class SyncnetDataset(Dataset):
+    use_landmarks = False
 
     def __getitem__(self, idx):
         while 1:
