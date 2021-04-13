@@ -191,7 +191,7 @@ def FaceDataset(object):
         return img, face, (y1, y2, x1, x2)
 
 
-def stream_from_face_config(config_path, infinite_loop=False):
+def stream_from_face_config(config_path, infinite_loop=False, start_frame=0):
     config = pd.read_csv(config_path, sep='\t', comment='#')
     if infinite_loop and len(config) == 1:
         row = config.iloc[0, :]
@@ -201,7 +201,10 @@ def stream_from_face_config(config_path, infinite_loop=False):
         while True:
             yield img, face, (y1, y2, x1, x2)
 
-    for _, row in config.iterrows():
+    assert start_frame < len(config) - 1
+    for i, row in config.iterrows():
+        if i < start_frame:
+            continue
         img = cv2.imread(row['img_path'])
         face = None
         if row['face_path']:
@@ -209,7 +212,9 @@ def stream_from_face_config(config_path, infinite_loop=False):
         x1, x2, y1, y2 = (row['x1'], row['x2'], row['y1'], row['y2'])
         yield img, face, (y1, y2, x1, x2)
     while infinite_loop:
-        for _, row in config.iterrows():
+        for i, row in config.iterrows():
+            if i < start_frame:
+                continue
             img = cv2.imread(row['img_path'])
             face = None
             if row['face_path']:

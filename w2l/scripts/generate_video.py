@@ -26,6 +26,8 @@ def main():
                         help='Specify output fps', default=None)
     parser.add_argument('--output_crf', type=int,
                         help='Specify output crf', default=0)
+    parser.add_argument('--start_seconds', type=float,
+                        help='Specify start seconds of video', default=0.0)
     parser.add_argument('--remove_face_dump_dir', action='store_true')
     args = parser.parse_args()
 
@@ -39,7 +41,8 @@ def main():
     generate_video(args.face_config_path, args.audio, args.checkpoint_path, args.outfile,
                    batch_size=args.batch_size, num_mels=hp.num_mels,
                    mel_step_size=hp.syncnet_mel_step_size, sample_rate=hp.sample_rate,
-                   output_fps=args.output_fps, output_crf=args.output_crf)
+                   output_fps=args.output_fps, output_crf=args.output_crf,
+                   start_seconds=args.start_seconds)
     if args.remove_face_dump_dir:
         config_dir = os.path.dirname(args.face_config_path)
         shutil.rmtree(config_dir)
