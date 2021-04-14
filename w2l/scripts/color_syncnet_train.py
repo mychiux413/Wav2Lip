@@ -147,23 +147,25 @@ def load_checkpoint(path, model, optimizer, reset_optimizer=False):
     return model
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='Code to train the expert lip-sync discriminator')
+def main(args=None):
 
-    parser.add_argument(
-        "--data_root", help="Root folder of the preprocessed LRS2 dataset", required=True)
+    if args is None:
+        parser = argparse.ArgumentParser(
+            description='Code to train the expert lip-sync discriminator')
 
-    parser.add_argument('--checkpoint_dir',
-                        help='Save checkpoints to this directory', required=True, type=str)
-    parser.add_argument('--checkpoint_path',
-                        help='Resumed from this checkpoint', default=None, type=str)
-    parser.add_argument('--train_limit', type=int, required=False, default=0)
-    parser.add_argument('--val_limit', type=int, required=False, default=0)
-    parser.add_argument('--filelists_dir',
-                        help='Specify filelists directory', type=str, default='filelists')
+        parser.add_argument(
+            "--data_root", help="Root folder of the preprocessed LRS2 dataset", required=True)
 
-    args = parser.parse_args()
+        parser.add_argument('--checkpoint_dir',
+                            help='Save checkpoints to this directory', required=True, type=str)
+        parser.add_argument('--checkpoint_path',
+                            help='Resumed from this checkpoint', default=None, type=str)
+        parser.add_argument('--train_limit', type=int, required=False, default=0)
+        parser.add_argument('--val_limit', type=int, required=False, default=0)
+        parser.add_argument('--filelists_dir',
+                            help='Specify filelists directory', type=str, default='filelists')
+
+        args = parser.parse_args()
 
     checkpoint_dir = args.checkpoint_dir
     checkpoint_path = args.checkpoint_path

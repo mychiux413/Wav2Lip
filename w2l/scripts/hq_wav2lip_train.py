@@ -55,9 +55,16 @@ def cosine_loss(a, v, y):
 l1loss = nn.L1Loss()
 
 
+def get_landmarks_loss(g_landmarks, gt_landmarks):
+    axis_delta = g_landmarks[:, :, :, 0] - gt_landmarks[:, :, :, 0] + g_landmarks[:, :, :, 1] - gt_landmarks[:, :, :, 1]
+    square_mean = torch.mean(torch.mean(axis_delta ** 2, dim=0), dim=-1)
+    loss_sum_T = torch.sum(square_mean)
+    return loss_sum_T / hparams.syncnet_T
+
+
 def get_sync_loss(mel, g):
     g = g[:, :, :, g.size(3)//2:]
-    g = torch.cat([g[:, :, i] for i in range(Wav2LipDataset.syncnet_T)], dim=1)
+    g = torch.cat([g[:, :, i] for i in range(hparams.syncnet_T)], dim=1)
     # B, 3 * T, H//2, W
     a, v = syncnet(mel, g)
     y = torch.ones(g.size(0), 1).float().to(device)
@@ -68,14 +75,17 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
           checkpoint_dir=None, checkpoint_interval=None, nepochs=None):
     global global_step, global_epoch
     # resumed_step = global_step
+    landmarks_points_len = len(hparams.landmarks_points)
 
     while global_epoch < nepochs:
         print('Starting Epoch: {}'.format(global_epoch))
         running_sync_loss, running_rec_loss, running_perceptual_loss = 0., 0., 0.
         running_disc_real_loss, running_disc_fake_loss, running_target_loss = 0., 0., 0.
+        running_landmarks_loss = 0.
         prog_bar = tqdm(enumerate(train_data_loader))
-        for step, (x, indiv_mels, mel, gt) in prog_bar:
-            if x.size(0) == 1:
+        for step, (x, indiv_mels, mel, gt, landmarks) in prog_bar:
+            B = x.size(0)
+            if B == 1:
                 continue
             disc.train()
             model.train()
@@ -89,7 +99,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             optimizer.zero_grad()
             disc_optimizer.zero_grad()
 
-            g = model(indiv_mels, x)
+            g, g_landmarks = model(indiv_mels, x)
 
             if hparams.syncnet_wt > 0.:
                 sync_loss = get_sync_loss(mel, g)
@@ -101,10 +111,18 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             else:
                 perceptual_loss = 0.
 
-            rec_loss = 0.14 * l1loss(g, gt) + ms_ssim_loss(g, gt) * 0.86
+            gt_landmarks = landmarks[:, :, hparams.landmarks_points].reshape(
+                (B, hparams.syncnet_T, landmarks_points_len, 2))
+            g_landmarks = g_landmarks.reshape((B, hparams.syncnet_T, landmarks_points_len, 2))
+            gt_landmarks = gt_landmarks.to(device)
+            landmarks_loss = get_landmarks_loss(g_landmarks, gt_landmarks)
+
+            rec_loss = hparams.l1_wt * \
+                l1loss(g, gt) + (1.0 - hparams.l1_wt) * ms_ssim_loss(g, gt)
 
             loss = hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss + \
-                (1. - hparams.syncnet_wt - hparams.disc_wt) * rec_loss
+                (1. - hparams.syncnet_wt - hparams.disc_wt) * \
+                rec_loss + landmarks_loss * hparams.landmarks_wt
 
             loss.backward()
             optimizer.step()
@@ -126,6 +144,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
             running_disc_real_loss += disc_real_loss.item()
             running_disc_fake_loss += disc_fake_loss.item()
+            running_landmarks_loss += landmarks_loss.item()
 
             if global_step % checkpoint_interval == 0:
                 save_sample_images(x, g, gt, global_step, checkpoint_dir)
@@ -162,12 +181,13 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
             next_step = step + 1
             prog_bar.set_description(
-                'Rec: {:04f}, Sync: {:04f}, Percep: {:04f} | Fake: {:04f}, Real: {:04f} | Target: {:04f}'.format(
+                'Rec: {:04f}, Sync: {:04f}, Percep: {:04f} | Fake: {:04f}, Real: {:04f} | Landmarks: {:04f} | Target: {:04f}'.format(
                     running_rec_loss / next_step,
                     running_sync_loss / next_step,
                     running_perceptual_loss / next_step,
                     running_disc_fake_loss / next_step,
                     running_disc_real_loss / next_step,
+                    running_landmarks_loss / next_step,
                     running_target_loss / next_step,
                 ))
 
@@ -178,64 +198,76 @@ def eval_model(test_data_loader, global_step, device, model, disc):
     eval_steps = 300
     print('Evaluating for {} steps'.format(eval_steps))
     running_sync_loss, recon_losses, running_disc_real_loss, \
-        running_disc_fake_loss, running_perceptual_loss, running_target_loss = [], [], [], [], [], []
-    while 1:
-        for step, (x, indiv_mels, mel, gt) in enumerate((test_data_loader)):
-            if x.size(0) == 1:
-                continue
-            model.eval()
-            disc.eval()
+        running_disc_fake_loss, running_perceptual_loss, running_target_loss, \
+        running_landmarks_loss = [], [], [], [], [], [], []
 
-            x = x.to(device)
-            mel = mel.to(device)
-            indiv_mels = indiv_mels.to(device)
-            gt = gt.to(device)
+    landmarks_points_len = len(hparams.landmarks_points)
+    for step, (x, indiv_mels, mel, gt, landmarks) in enumerate((test_data_loader)):
+        B = x.size(0)
+        if B == 1:
+            continue
+        model.eval()
+        disc.eval()
 
-            pred = disc(gt)
-            disc_real_loss = F.binary_cross_entropy(
-                pred, torch.ones((len(pred), 1)).to(device))
+        x = x.to(device)
+        mel = mel.to(device)
+        indiv_mels = indiv_mels.to(device)
+        gt = gt.to(device)
 
-            g = model(indiv_mels, x)
+        pred = disc(gt)
+        disc_real_loss = F.binary_cross_entropy(
+            pred, torch.ones((len(pred), 1)).to(device))
 
-            pred = disc(g)
-            disc_fake_loss = F.binary_cross_entropy(
-                pred, torch.zeros((len(pred), 1)).to(device))
+        g, g_landmarks = model(indiv_mels, x)
 
-            running_disc_real_loss.append(disc_real_loss.item())
-            running_disc_fake_loss.append(disc_fake_loss.item())
+        gt_landmarks = landmarks[:, :, hparams.landmarks_points].reshape(
+            (B, hparams.syncnet_T, landmarks_points_len, 2))
+        g_landmarks = g_landmarks.reshape((B, hparams.syncnet_T, landmarks_points_len, 2))
+        gt_landmarks = gt_landmarks.to(device)
+        landmarks_loss = get_landmarks_loss(g_landmarks, gt_landmarks)
 
-            sync_loss = get_sync_loss(mel, g)
+        pred = disc(g)
+        disc_fake_loss = F.binary_cross_entropy(
+            pred, torch.zeros((len(pred), 1)).to(device))
 
-            if hparams.disc_wt > 0.:
-                perceptual_loss = disc.perceptual_forward(g)
-            else:
-                perceptual_loss = 0.
+        running_disc_real_loss.append(disc_real_loss.item())
+        running_disc_fake_loss.append(disc_fake_loss.item())
+        running_landmarks_loss.append(landmarks_loss.item())
 
-            rec_loss = 0.14 * l1loss(g, gt) + ms_ssim_loss(g, gt) * 0.86
+        sync_loss = get_sync_loss(mel, g)
 
-            loss = hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss + \
-                (1. - hparams.syncnet_wt - hparams.disc_wt) * rec_loss
+        if hparams.disc_wt > 0.:
+            perceptual_loss = disc.perceptual_forward(g)
+        else:
+            perceptual_loss = 0.
 
-            running_target_loss.append(loss.item())
-            recon_losses.append(rec_loss.item())
-            running_sync_loss.append(sync_loss.item())
+        rec_loss = hparams.l1_wt * l1loss(g, gt) + (1.0 - hparams.l1_wt) * ms_ssim_loss(g, gt)
 
-            if hparams.disc_wt > 0.:
-                running_perceptual_loss.append(perceptual_loss.item())
-            else:
-                running_perceptual_loss.append(0.)
+        loss = hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss + \
+            (1. - hparams.syncnet_wt - hparams.disc_wt) * \
+            rec_loss + hparams.landmarks_wt * landmarks_loss
 
-            if step > eval_steps:
-                break
+        running_target_loss.append(loss.item())
+        recon_losses.append(rec_loss.item())
+        running_sync_loss.append(sync_loss.item())
 
-        print('Rec: {:04f}, Sync: {:04f}, Percep: {:04f} | Fake: {:04f}, Real: {:04f} | Target: {:04f}'.format(
-            np.mean(recon_losses),
-            np.mean(running_sync_loss),
-            np.mean(running_perceptual_loss),
-            np.mean(running_disc_fake_loss),
-            np.mean(running_disc_real_loss),
-            np.mean(running_target_loss)))
-        return np.mean(running_sync_loss)
+        if hparams.disc_wt > 0.:
+            running_perceptual_loss.append(perceptual_loss.item())
+        else:
+            running_perceptual_loss.append(0.)
+
+        if step > eval_steps:
+            break
+
+    print('Rec: {:04f}, Sync: {:04f}, Percep: {:04f} | Fake: {:04f}, Real: {:04f} | Landmarks: {:04f} | Target: {:04f}'.format(
+        np.mean(recon_losses),
+        np.mean(running_sync_loss),
+        np.mean(running_perceptual_loss),
+        np.mean(running_disc_fake_loss),
+        np.mean(running_disc_real_loss),
+        np.mean(running_landmarks_loss),
+        np.mean(running_target_loss)))
+    return np.mean(running_sync_loss)
 
 
 def save_checkpoint(model, optimizer, step, checkpoint_dir, epoch, prefix=''):
@@ -283,28 +315,31 @@ def load_checkpoint(path, model, optimizer, reset_optimizer=False, overwrite_glo
     return model
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='Code to train the Wav2Lip model WITH the visual quality discriminator')
+def main(args=None):
 
-    parser.add_argument(
-        "--data_root", help="Root folder of the preprocessed LRS2 dataset", required=True, type=str)
+    if args is None:
+        parser = argparse.ArgumentParser(
+            description='Code to train the Wav2Lip model WITH the visual quality discriminator')
 
-    parser.add_argument(
-        '--checkpoint_dir', help='Save checkpoints to this directory', required=True, type=str)
-    parser.add_argument('--syncnet_checkpoint_path',
-                        help='Load the pre-trained Expert discriminator', required=True, type=str)
+        parser.add_argument(
+            "--data_root", help="Root folder of the preprocessed LRS2 dataset", required=True, type=str)
 
-    parser.add_argument(
-        '--checkpoint_path', help='Resume generator from this checkpoint', default=None, type=str)
-    parser.add_argument('--disc_checkpoint_path',
-                        help='Resume quality disc from this checkpoint', default=None, type=str)
-    parser.add_argument('--train_limit', type=int, required=False, default=0)
-    parser.add_argument('--val_limit', type=int, required=False, default=0)
-    parser.add_argument('--filelists_dir',
-                        help='Specify filelists directory', type=str, default='filelists')
+        parser.add_argument(
+            '--checkpoint_dir', help='Save checkpoints to this directory', required=True, type=str)
+        parser.add_argument('--syncnet_checkpoint_path',
+                            help='Load the pre-trained Expert discriminator', required=True, type=str)
 
-    args = parser.parse_args()
+        parser.add_argument(
+            '--checkpoint_path', help='Resume generator from this checkpoint', default=None, type=str)
+        parser.add_argument('--disc_checkpoint_path',
+                            help='Resume quality disc from this checkpoint', default=None, type=str)
+        parser.add_argument('--train_limit', type=int,
+                            required=False, default=0)
+        parser.add_argument('--val_limit', type=int, required=False, default=0)
+        parser.add_argument('--filelists_dir',
+                            help='Specify filelists directory', type=str, default='filelists')
+
+        args = parser.parse_args()
 
     checkpoint_dir = args.checkpoint_dir
 

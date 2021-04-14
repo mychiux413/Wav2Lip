@@ -209,7 +209,7 @@ class Dataset(object):
             else:
                 window[:, i, mouth_y1:mouth_y2, mouth_x1:mouth_x2] = 0.
 
-        return window
+        return window, landmarks
 
     def __len__(self):
         return self.data_len
@@ -279,14 +279,15 @@ class Wav2LipDataset(Dataset):
             y = window.clone()
             # window = self.mask_window(window)
 
-            window = self.mask_mouth(window, vidname, window_fnames)
-            wrong_window = self.mask_mouth(
+            window, landmarks = self.mask_mouth(window, vidname, window_fnames)
+            wrong_window, _ = self.mask_mouth(
                 wrong_window, vidname, wrong_window_fnames, reverse=True)
             x = torch.cat([window, wrong_window], axis=0)
 
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
             indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)
-            return x, indiv_mels, mel, y
+            landmarks = torch.FloatTensor(landmarks)
+            return x, indiv_mels, mel, y, landmarks
 
 
 class SyncnetDataset(Dataset):

@@ -245,6 +245,10 @@ def main():
                         help='Image Size of Syncnet', default=96, type=int)
     parser.add_argument('--min_img_size',
                         help='', default=0, type=int)
+    parser.add_argument('--min_mean_blur_score',
+                        help='', default=0, type=float)
+    parser.add_argument('--blur_score_q_cut',
+                        help='', default=1.0, type=float)
     parser.add_argument('--filelists_dir',
                         help='Specify filelists directory', type=str, default='filelists')
     parser.add_argument('--include_train_dirs',
@@ -307,7 +311,20 @@ def main():
             "max_mean_x", max_mean_x,
             "max_std_x", max_std_x,
         )
-
+    if args.min_mean_blur_score > 0 or args.blur_score_q_cut < 1.0:
+        blur_paths = glob(os.path.join(args.data_root, "**/**/blur.npy"))
+        blurs_mean = {}
+        blurs_std = {}
+        for path in blur_paths:
+            values = np.load(path, allow_pickle=True).tolist()
+            if len(values) == 0:
+                continue
+            blurs_mean[os.path.dirname(path)] = values
+        for dirpath, values in blurs_mean.items():
+            lst = list(values.values())
+            blurs_mean[dirpath] = np.mean(lst)
+            blurs_std[dirpath] = np.std(lst)
+        max_std_blur = np.quantile(list(blurs_std.values()), q=args.blur_score_q_cut)
     i_train = 0
     i_val = 0
     train_lines = []
@@ -336,6 +353,10 @@ def main():
                 if stats[dataname_path][52, 0, 0] > max_mean_x:
                     continue
                 if stats[dataname_path][52, 0, 1] > max_std_x:
+                    continue
+                if args.min_mean_blur_score > 0 and blurs_mean[dataname_path] < args.min_mean_blur_score:
+                    continue
+                if args.blur_score_q_cut < 1.0 and blurs_std[dataname_path] > max_std_blur:
                     continue
             line = os.path.join(dirname, dataname)
             if args.syncnet_checkpoint_path is not None:

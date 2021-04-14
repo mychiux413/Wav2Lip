@@ -84,18 +84,18 @@ hparams = HParams(
     img_size=192,  # 96 or 192
     fps=30,
 
-    batch_size=4,
+    batch_size=6,
     initial_learning_rate=5e-5,
     opt_amsgrad=True,
     opt_weight_decay=0.0,
     # ctrl + c, stop whenever eval loss is consistently greater than train loss for ~10 epochs
     nepochs=200000000000000000,
     num_workers=8,
-    checkpoint_interval=10000,
-    eval_interval=10000,
+    checkpoint_interval=1000,
+    eval_interval=1000,
     save_optimizer_state=True,
 
-    sampling_half_window_size_seconds=2.0,
+    sampling_half_window_size_seconds=1.0,
     unmask_fringe_width=5,
     img_augment=True,
 
@@ -105,9 +105,9 @@ hparams = HParams(
     expand_mouth_height_ratio=0.7,
 
     # is initially zero, will be set automatically to 0.03 later. Leads to faster convergence.
-    syncnet_wt=0.0,
+    syncnet_wt=0.03,
     syncnet_batch_size=128,
-    syncnet_lr=5e-6,
+    syncnet_lr=1e-5,
     syncnet_eval_interval=20000,
     syncnet_checkpoint_interval=20000,
     syncnet_T=6,
@@ -119,6 +119,11 @@ hparams = HParams(
     disc_initial_learning_rate=5e-5,
     disc_opt_amsgrad=True,
     disc_opt_weight_decay=0.0,
+
+    l1_wt=0.14,
+    landmarks_wt=0.2,
+    landmarks_points=[3, 6, 9, 12, 15, 32, 34, 36, 49, 52, 55, 58, 63, 67],
+
 )
 
 

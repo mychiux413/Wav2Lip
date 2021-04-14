@@ -224,28 +224,30 @@ def load_checkpoint(path, model, optimizer, reset_optimizer=False, overwrite_glo
     return model
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='Code to train the Wav2Lip model without the visual quality discriminator')
+def main(args=None):
 
-    parser.add_argument(
-        "--data_root", help="Root folder of the preprocessed LRS2 dataset", required=True, type=str)
+    if args is None:
+        parser = argparse.ArgumentParser(
+            description='Code to train the Wav2Lip model without the visual quality discriminator')
 
-    parser.add_argument(
-        '--checkpoint_dir', help='Save checkpoints to this directory', required=True, type=str)
-    parser.add_argument('--syncnet_checkpoint_path',
-                        help='Load the pre-trained Expert discriminator', required=True, type=str)
+        parser.add_argument(
+            "--data_root", help="Root folder of the preprocessed LRS2 dataset", required=True, type=str)
 
-    parser.add_argument(
-        '--checkpoint_path', help='Resume from this checkpoint', default=None, type=str)
-    parser.add_argument('--train_limit', type=int,
-                        required=False, default=0)
-    parser.add_argument('--val_limit', type=int,
-                        required=False, default=0)
-    parser.add_argument('--filelists_dir',
-                        help='Specify filelists directory', type=str, default='filelists')
+        parser.add_argument(
+            '--checkpoint_dir', help='Save checkpoints to this directory', required=True, type=str)
+        parser.add_argument('--syncnet_checkpoint_path',
+                            help='Load the pre-trained Expert discriminator', required=True, type=str)
 
-    args = parser.parse_args()
+        parser.add_argument(
+            '--checkpoint_path', help='Resume from this checkpoint', default=None, type=str)
+        parser.add_argument('--train_limit', type=int,
+                            required=False, default=0)
+        parser.add_argument('--val_limit', type=int,
+                            required=False, default=0)
+        parser.add_argument('--filelists_dir',
+                            help='Specify filelists directory', type=str, default='filelists')
+
+        args = parser.parse_args()
 
     checkpoint_dir = args.checkpoint_dir
 
