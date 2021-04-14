@@ -18,7 +18,9 @@ from w2l import face_detection
 from w2l.utils.stream import stream_video_as_batch
 from w2l.utils.facenet import load_facenet_model
 from w2l.utils.env import device
+from w2l.utils.loss import cal_blur
 import torch
+from multiprocessing import Pool
 
 
 def process_video_file(vfile, args, gpu_id, fa):
@@ -26,7 +28,8 @@ def process_video_file(vfile, args, gpu_id, fa):
     dirname = vfile.split('/')[-2]
 
     fulldir = os.path.join(args.preprocessed_root, dirname, vidname)
-    if os.path.exists(fulldir) and len(os.listdir(fulldir)) > 3 * hp.syncnet_T + 2:
+    wavpath = os.path.join(fulldir, 'audio.wav')
+    if os.path.exists(fulldir) and len(os.listdir(fulldir)) > 3 * hp.syncnet_T + 2 and os.path.exists(wavpath):
         return
     os.makedirs(fulldir, exist_ok=True)
 
@@ -90,7 +93,8 @@ def process_mouth_position(model, args, vfile):
 
     img_batch = []
     imgname_batch = []
-    fnames = list(filter(lambda name: name.endswith('.png'), os.listdir(fulldir)))
+    fnames = list(
+        filter(lambda name: name.endswith('.png'), os.listdir(fulldir)))
     fnames_len = len(fnames)
     for i, fname in enumerate(fnames):
         path = os.path.join(fulldir, fname)
@@ -120,6 +124,24 @@ def process_mouth_position(model, args, vfile):
     assert len(config) == fnames_len, "dump len vs .png size: {} vs {}".format(
         len(config), fnames_len,
     )
+
+
+def process_blur_score(job):
+    args, vfile = job
+    vidname = os.path.basename(vfile).split('.')[0]
+    dirname = vfile.split('/')[-2]
+    fulldir = os.path.join(args.preprocessed_root, dirname, vidname)
+    config_path = os.path.join(fulldir, "blur.npy")
+    if os.path.exists(config_path):
+        return False
+    config = {}
+    for fname in filter(lambda name: name.endswith('.png'), os.listdir(fulldir)):
+        path = os.path.join(fulldir, fname)
+        img = cv2.imread(path)
+        score = cal_blur(img)
+        config[fname] = score
+    np.save(config_path, config, allow_pickle=True)
+    return True
 
 
 def mp_handler(job):
@@ -184,6 +206,15 @@ def main():
         except Exception as _:  # noqa: F841
             traceback.print_exc()
             continue
+    del facenet_model
+
+    def gen():
+        for vfile in tqdm(filelist, desc="dump blur scores"):
+            yield args, vfile
+
+    with Pool(hp.num_workers) as p:
+        for _ in p.imap(process_blur_score, gen(), chunksize=20):
+            pass
 
 
 if __name__ == '__main__':
