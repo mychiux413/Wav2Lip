@@ -55,6 +55,10 @@ def main():
                         help='Prevent smoothing face detections over a short temporal window')
     parser.add_argument('--smooth_size', default=5,
                         type=int, help='Specify the smooth size')
+    parser.add_argument('--output_fps', type=float,
+                        help='Specify output fps', default=None)
+    parser.add_argument('--output_crf', type=int,
+                        help='Specify output crf', default=0)
 
     args = parser.parse_args()
     if not os.path.isfile(args.face):
@@ -75,7 +79,8 @@ def main():
 
     generate_video(config_path, args.audio, args.checkpoint_path, args.outfile,
                    batch_size=args.wav2lip_batch_size, num_mels=hp.num_mels,
-                   mel_step_size=hp.syncnet_mel_step_size, sample_rate=hp.sample_rate)
+                   mel_step_size=hp.syncnet_mel_step_size, sample_rate=hp.sample_rate,
+                   output_fps=args.output_fps, output_crf=args.output_crf)
 
 
 if __name__ == '__main__':

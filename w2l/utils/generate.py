@@ -56,9 +56,9 @@ def to_mels(audio_path, fps, num_mels=80, mel_step_size=16, sample_rate=16000):
     return mel_chunks
 
 
-def datagen(config_path, mels, batch_size=128):
+def datagen(config_path, mels, batch_size=128, start_frame=0):
     img_batch, mel_batch, frame_batch, coords_batch = [], [], [], []
-    stream = stream_from_face_config(config_path, infinite_loop=True)
+    stream = stream_from_face_config(config_path, infinite_loop=True, start_frame=start_frame)
 
     for i, m in enumerate(mels):
         frame_to_save, face, coords = next(stream)
@@ -96,7 +96,8 @@ def datagen(config_path, mels, batch_size=128):
 
 
 def generate_video(face_config_path, audio_path, model_path, output_path, face_fps=25,
-                   batch_size=128, num_mels=80, mel_step_size=16, sample_rate=16000):
+                   batch_size=128, num_mels=80, mel_step_size=16, sample_rate=16000,
+                   output_fps=None, output_crf=0, start_seconds=0.0):
 
     assert os.path.exists(face_config_path)
     with open(face_config_path, 'r') as f:
@@ -104,12 +105,15 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
         if firstline.startswith('#'):
             splits = firstline.split('fps=')
             if len(splits) > 1:
-                face_fps = int(splits[1].strip())
+                face_fps = float(splits[1].strip())
+    if output_fps is None:
+        output_fps = face_fps
 
+    start_frame = int(np.round(start_seconds * face_fps))
     mels = to_mels(
         audio_path, face_fps,
         num_mels=num_mels, mel_step_size=mel_step_size, sample_rate=sample_rate)
-    gen = datagen(face_config_path, mels, batch_size=batch_size)
+    gen = datagen(face_config_path, mels, batch_size=batch_size, start_frame=start_frame)
     for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, total=len(mels) // batch_size)):
         if i == 0:
             model = load_model(model_path)
@@ -138,6 +142,6 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
 
     out.release()
 
-    command = "ffmpeg -y -i '{}' -i '{}' -vf fps=30 -crf 0 -vcodec h264 -preset veryslow '{}'".format(
-        audio_path, 'temp/result.avi', output_path)
+    command = "ffmpeg -y -i '{}' -i '{}' -vf fps={} -crf {} -vcodec h264 -preset veryslow '{}'".format(
+        audio_path, 'temp/result.avi', output_fps, output_crf, output_path)
     subprocess.call(command, shell=platform.system() != 'Windows')
