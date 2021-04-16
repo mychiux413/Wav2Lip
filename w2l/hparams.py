@@ -84,7 +84,7 @@ hparams = HParams(
     img_size=192,  # 96 or 192
     fps=30,
 
-    batch_size=6,
+    batch_size=4,
     initial_learning_rate=5e-5,
     opt_amsgrad=True,
     opt_weight_decay=0.0,
@@ -105,7 +105,7 @@ hparams = HParams(
     expand_mouth_height_ratio=0.7,
 
     # is initially zero, will be set automatically to 0.03 later. Leads to faster convergence.
-    syncnet_wt=0.03,
+    syncnet_wt=0.0,
     syncnet_batch_size=128,
     syncnet_lr=1e-5,
     syncnet_eval_interval=20000,
@@ -120,7 +120,8 @@ hparams = HParams(
     disc_opt_amsgrad=True,
     disc_opt_weight_decay=0.0,
 
-    l1_wt=0.14,
+    l1_wt=0.5,
+    ssim_wt=0.5,
     landmarks_wt=0.2,
     landmarks_points=[3, 6, 9, 12, 15, 32, 34, 36, 49, 52, 55, 58, 63, 67],
 

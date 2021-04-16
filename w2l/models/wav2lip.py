@@ -235,7 +235,7 @@ class Wav2Lip(nn.Module):
         else:
             outputs = x
 
-        return outputs, landmarks  # (BxT, 3, img_size, img_size), (BxT, 76)
+        return outputs, landmarks  # (BxT, 3, img_size, img_size), (BxT, landmarks_points*2)
 
 
 class Wav2Lip_disc_qual(nn.Module):
