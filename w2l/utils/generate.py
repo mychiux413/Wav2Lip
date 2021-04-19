@@ -1,4 +1,4 @@
-from w2l.utils.face_detect import stream_from_face_config
+from w2l.utils.face_detect import stream_from_face_config, FaceConfigStream
 from w2l.utils import audio
 from w2l.hparams import hparams
 import numpy as np
@@ -9,6 +9,7 @@ import cv2
 import subprocess
 import platform
 import os
+from torch.utils import data as data_utils
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -58,38 +59,14 @@ def to_mels(audio_path, fps, num_mels=80, mel_step_size=16, sample_rate=16000):
 
 
 def datagen(config_path, mels, batch_size=128, start_frame=0):
-    img_batch, mel_batch, frame_batch, coords_batch = [], [], [], []
-    stream = stream_from_face_config(config_path, infinite_loop=True, start_frame=start_frame)
-    img_size = hparams.img_size
+    stream = FaceConfigStream(config_path, mels, start_frame)
+    stream_loader = data_utils.DataLoader(stream, num_workers=hparams.num_workers, batch_size=batch_size)
+    for img_batch, mel_batch, frame_batch, coords_batch in stream_loader:
+        img_masked = img_batch.clone()
+        img_masked[:, hparams.img_size//2:] = 0
 
-    for i, m in enumerate(mels):
-        frame_to_save, face, coords = next(stream)
-        img_batch.append(face)
-        mel_batch.append(m)
-        frame_batch.append(frame_to_save)
-        coords_batch.append(coords)
-
-        if len(img_batch) >= batch_size:
-            img_batch, mel_batch = np.asarray(img_batch), np.asarray(mel_batch)
-
-            img_masked = img_batch.copy()
-            img_masked[:, img_size//2:] = 0
-
-            img_batch = np.concatenate((img_masked, img_batch), axis=3) / 255.
-            mel_batch = np.reshape(
-                mel_batch, [len(mel_batch), mel_batch.shape[1], mel_batch.shape[2], 1])
-
-            yield img_batch, mel_batch, frame_batch, coords_batch
-            img_batch, mel_batch, frame_batch, coords_batch = [], [], [], []
-
-    if len(img_batch) > 0:
-        img_batch, mel_batch = np.asarray(img_batch), np.asarray(mel_batch)
-
-        img_masked = img_batch.copy()
-        img_masked[:, img_size//2:] = 0
-
-        img_batch = np.concatenate((img_masked, img_batch), axis=3) / 255.
-        mel_batch = np.reshape(
+        img_batch = torch.cat((img_masked, img_batch), axis=3) / 255.
+        mel_batch = torch.reshape(
             mel_batch, [len(mel_batch), mel_batch.shape[1], mel_batch.shape[2], 1])
 
         yield img_batch, mel_batch, frame_batch, coords_batch
@@ -118,16 +95,15 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
         if i == 0:
             model = load_model(model_path)
             print("Model loaded")
+            model.eval()
 
             frame_h, frame_w = frames[0].shape[:-1]
             out = cv2.VideoWriter(
                 'temp/result.avi',
                 cv2.VideoWriter_fourcc(*'FFV1'), face_fps, (frame_w, frame_h))
 
-        img_batch = torch.FloatTensor(
-            np.transpose(img_batch, (0, 3, 1, 2))).to(device)
-        mel_batch = torch.FloatTensor(
-            np.transpose(mel_batch, (0, 3, 1, 2))).to(device)
+        img_batch = img_batch.permute((0, 3, 1, 2)).to(device)
+        mel_batch = mel_batch.permute((0, 3, 1, 2)).to(device)
 
         with torch.no_grad():
             pred = model(mel_batch, img_batch)
@@ -135,6 +111,7 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
         pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
 
         for p, f, c in zip(pred, frames, coords):
+            f = f.cpu().numpy().astype(np.uint8)
             y1, y2, x1, x2 = c
             face_width = x2 - x1
             face_height = y2 - y1
