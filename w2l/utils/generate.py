@@ -1,5 +1,6 @@
 from w2l.utils.face_detect import stream_from_face_config
 from w2l.utils import audio
+from w2l.hparams import hparams
 import numpy as np
 from tqdm import tqdm
 from w2l.models import Wav2Lip
@@ -59,11 +60,10 @@ def to_mels(audio_path, fps, num_mels=80, mel_step_size=16, sample_rate=16000):
 def datagen(config_path, mels, batch_size=128, start_frame=0):
     img_batch, mel_batch, frame_batch, coords_batch = [], [], [], []
     stream = stream_from_face_config(config_path, infinite_loop=True, start_frame=start_frame)
+    img_size = hparams.img_size
 
     for i, m in enumerate(mels):
         frame_to_save, face, coords = next(stream)
-        if i == 0:
-            img_size = face.shape[0]
         img_batch.append(face)
         mel_batch.append(m)
         frame_batch.append(frame_to_save)
@@ -136,8 +136,11 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
 
         for p, f, c in zip(pred, frames, coords):
             y1, y2, x1, x2 = c
-            p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
-            f[y1:y2, x1:x2] = p
+            face_width = x2 - x1
+            face_height = y2 - y1
+            if face_width > 0 and face_height > 0:
+                p = cv2.resize(p.astype(np.uint8), (face_width, face_height))
+                f[y1:y2, x1:x2] = p
             out.write(f)
 
     out.release()

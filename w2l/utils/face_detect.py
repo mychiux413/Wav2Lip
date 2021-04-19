@@ -5,6 +5,7 @@ from w2l.utils.stream import stream_video_as_batch, get_video_fps_and_frame_coun
 import pandas as pd
 from tqdm import tqdm
 import numpy as np
+from w2l.hparams import hparams
 
 
 class Smoothier:
@@ -206,9 +207,10 @@ def stream_from_face_config(config_path, infinite_loop=False, start_frame=0):
         if i < start_frame:
             continue
         img = cv2.imread(row['img_path'])
-        face = None
-        if row['face_path']:
+        if not pd.isna(row['face_path']):
             face = cv2.imread(row['face_path'])
+        else:
+            face = np.zeros((hparams.img_size, hparams.img_size, 3), dtype='uint8')
         x1, x2, y1, y2 = (row['x1'], row['x2'], row['y1'], row['y2'])
         yield img, face, (y1, y2, x1, x2)
     while infinite_loop:
@@ -216,8 +218,9 @@ def stream_from_face_config(config_path, infinite_loop=False, start_frame=0):
             if i < start_frame:
                 continue
             img = cv2.imread(row['img_path'])
-            face = None
-            if row['face_path']:
+            if not pd.isna(row['face_path']):
                 face = cv2.imread(row['face_path'])
+            else:
+                face = np.zeros((hparams.img_size, hparams.img_size, 3), dtype='uint8')
             x1, x2, y1, y2 = (row['x1'], row['x2'], row['y1'], row['y2'])
             yield img, face, (y1, y2, x1, x2)
