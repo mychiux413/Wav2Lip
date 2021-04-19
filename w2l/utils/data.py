@@ -300,6 +300,8 @@ class Wav2LipDataset(Dataset):
 
 
 class SyncnetDataset(Dataset):
+    use_landmarks = False
+
     def __getitem__(self, idx):
         while 1:
             vidname = self.get_vidname(idx)
