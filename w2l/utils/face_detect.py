@@ -6,6 +6,7 @@ import pandas as pd
 from tqdm import tqdm
 import numpy as np
 from w2l.hparams import hparams
+import torch
 
 
 class Smoothier:
@@ -224,3 +225,32 @@ def stream_from_face_config(config_path, infinite_loop=False, start_frame=0):
                 face = np.zeros((hparams.img_size, hparams.img_size, 3), dtype='uint8')
             x1, x2, y1, y2 = (row['x1'], row['x2'], row['y1'], row['y2'])
             yield img, face, (y1, y2, x1, x2)
+
+
+class FaceConfigStream(object):
+    def __init__(self, config_path, mels, start_frame=0):
+        self.config_path = config_path
+        self.start_frame = start_frame
+        self.config = pd.read_csv(config_path, sep='\t', comment='#')
+        self.mels = mels.copy()
+        self.video_len = len(self.config) - self.start_frame
+
+    def __len__(self):
+        return len(self.mels)
+
+    def __getitem__(self, idx):
+        mel = self.mels[idx]
+        idx = (idx + self.start_frame) % self.video_len
+        row = self.config.iloc[idx]
+        img = cv2.imread(row['img_path'])
+        if not pd.isna(row['face_path']):
+            face = cv2.imread(row['face_path'])
+        else:
+            face = np.zeros((hparams.img_size, hparams.img_size, 3), dtype='uint8')
+        x1, x2, y1, y2 = (row['x1'], row['x2'], row['y1'], row['y2'])
+
+        face = torch.FloatTensor(face)
+        mel = torch.FloatTensor(mel)
+        img = torch.IntTensor(img)
+        coords = torch.IntTensor([y1, y2, x1, x2])
+        return face, mel, img, coords
