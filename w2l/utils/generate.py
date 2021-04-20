@@ -1,4 +1,4 @@
-from w2l.utils.face_detect import stream_from_face_config, FaceConfigStream
+from w2l.utils.face_detect import FaceConfigStream
 from w2l.utils import audio
 from w2l.hparams import hparams
 import numpy as np
