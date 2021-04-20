@@ -176,23 +176,6 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
     return face_config_path
 
 
-def FaceDataset(object):
-    def __init__(self, config_path):
-        self.config = pd.read_csv(config_path, sep='\t')
-        print("{} faces".format(len(self.config)))
-
-    def __len__(self):
-        return len(self.config)
-
-    def __getitem__(self, idx):
-        row = self.config.iloc[idx]
-        img = cv2.imread(row['img_path'])
-        if row['face_path']:
-            face = cv2.imread(row['face_path'])
-        x1, x2, y1, y2 = (row['x1'], row['x2'], row['y1'], row['y2'])
-        return img, face, (y1, y2, x1, x2)
-
-
 def stream_from_face_config(config_path, infinite_loop=False, start_frame=0):
     config = pd.read_csv(config_path, sep='\t', comment='#')
     if infinite_loop and len(config) == 1:
