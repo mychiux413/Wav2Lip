@@ -65,7 +65,7 @@ def datagen(config_path, mels, batch_size=128, start_frame=0):
         img_masked = img_batch.clone()
         img_masked[:, hparams.img_size//2:] = 0
 
-        img_batch = torch.cat((img_masked, img_batch), axis=3) / 255.
+        img_batch = torch.cat((img_masked, img_batch), dim=3) / 255.
         mel_batch = torch.reshape(
             mel_batch, [len(mel_batch), mel_batch.shape[1], mel_batch.shape[2], 1])
 
