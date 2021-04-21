@@ -60,7 +60,9 @@ def to_mels(audio_path, fps, num_mels=80, mel_step_size=16, sample_rate=16000):
 
 def datagen(config_path, mels, batch_size=128, start_frame=0):
     stream = FaceConfigStream(config_path, mels, start_frame)
-    stream_loader = data_utils.DataLoader(stream, num_workers=hparams.num_workers, batch_size=batch_size)
+    stream_loader = data_utils.DataLoader(
+        stream,
+        num_workers=0, batch_size=batch_size)
     for img_batch, mel_batch, frame_batch, coords_batch, mouth_batch in stream_loader:
         img_masked = img_batch.clone()
         for j, (x1, x2, y1, y2) in enumerate(mouth_batch):

@@ -3,7 +3,6 @@ import sys
 if sys.version_info[0] < 3 and sys.version_info[1] < 2:
     raise Exception("Must be using >= Python 3.2")
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import argparse
 import os
@@ -23,7 +22,7 @@ import torch
 from multiprocessing import Pool
 
 
-def process_video_file(vfile, args, gpu_id, fa):
+def process_video_file(fa, vfile, args):
     vidname = os.path.basename(vfile).split('.')[0]
     dirname = vfile.split('/')[-2]
 
@@ -33,12 +32,20 @@ def process_video_file(vfile, args, gpu_id, fa):
         return
     os.makedirs(fulldir, exist_ok=True)
 
-    n_pixels_1080p = 1920 * 1080
-
     video_stream = cv2.VideoCapture(vfile)
-    width = video_stream.get(cv2.CAP_PROP_FRAME_WIDTH)
-    height = video_stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    width = int(video_stream.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(video_stream.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
+    min_height = 270
+    min_width = 480
+
+    resize_ratio = min_width / float(width)
+    if height * resize_ratio < min_height:
+        resize_ratio = min_height / float(height)
+    target_width = int(np.round(width * resize_ratio))
+    target_height = int(np.round(height * resize_ratio))
+
+    should_resize = width > target_width or height > target_height
     n_pixels_of_video = width * height
 
     video_stream.release()
@@ -46,14 +53,21 @@ def process_video_file(vfile, args, gpu_id, fa):
     if n_pixels_of_video == 0:
         print("invalid video: ", vidname)
         return
-    batch_size = max(
-        int(n_pixels_1080p / n_pixels_of_video * args.batch_size), 1)
 
-    batches = stream_video_as_batch(vfile, batch_size, steps=batch_size)
+    batches = stream_video_as_batch(
+        vfile, args.batch_size, steps=args.batch_size)
+    resize_factor_height = height / float(target_height)
+    resize_factor_width = width / float(target_width)
 
     i = -1
-    for fb in batches:
-        preds = fa[gpu_id].get_detections_for_batch(np.asarray(fb))
+    for images in batches:
+        if should_resize:
+            x = [cv2.resize(image, (target_width, target_height))
+                 for image in images]
+            x = np.array(x)
+        else:
+            x = np.array(images)
+        preds = fa.get_detections_for_batch(x)
 
         for j, f in enumerate(preds):
             i += 1
@@ -61,10 +75,14 @@ def process_video_file(vfile, args, gpu_id, fa):
                 continue
 
             x1, y1, x2, y2 = f
-            height = fb[j].shape[0]
-            y2 = min(height, y2 + 20)  # add chin
+            if should_resize:
+                x1 = int(np.round(x1 * resize_factor_width))
+                x2 = int(np.round(x2 * resize_factor_width))
+                y1 = int(np.round(y1 * resize_factor_height))
+                y2 = int(np.round(y2 * resize_factor_height))
+                y2 = min(height, y2 + 20)  # add chin
             cv2.imwrite(os.path.join(fulldir, '{}.png'.format(i)),
-                        fb[j][y1:y2, x1:x2])
+                        images[j][y1:y2, x1:x2])
 
 
 def process_audio_file(vfile, args, template):
@@ -161,7 +179,7 @@ def main():
     parser.add_argument(
         '--ngpu', help='Number of GPUs across which to run in parallel', default=1, type=int)
     parser.add_argument(
-        '--batch_size', help='Single GPU Face detection batch size', default=32, type=int)
+        '--batch_size', help='Single GPU Face detection batch size', default=12, type=int)
     parser.add_argument(
         "--data_root", help="Root folder of the LRS2 dataset", required=True)
     parser.add_argument("--preprocessed_root",
@@ -171,21 +189,25 @@ def main():
 
     args = parser.parse_args()
 
-    fa = [face_detection.FaceAlignment(face_detection.LandmarksType._2D, flip_input=False,
-                                       device='cuda:{}'.format(id)) for id in range(args.ngpu)]
+    fa = face_detection.FaceAlignment(
+        face_detection.LandmarksType._2D, flip_input=False,
+        device='cuda')
 
     template = "ffmpeg -loglevel panic -y -i '{}' -strict -2 '{}'"
 
-    print('Started processing for {} with {} GPUs'.format(
-        args.data_root, args.ngpu))
+    print('Started processing from {} to {}'.format(
+        args.data_root, args.preprocessed_root))
 
     filelist = glob(os.path.join(args.data_root, '*/*.mp4'))
 
-    jobs = [(vfile, args, i % args.ngpu, fa)
-            for i, vfile in enumerate(filelist)]
-    p = ThreadPoolExecutor(args.ngpu)
-    futures = [p.submit(mp_handler, j) for j in jobs]
-    _ = [r.result() for r in tqdm(as_completed(futures), total=len(futures))]
+    for f in tqdm(filelist, total=len(filelist), desc='dump video'):
+        try:
+            process_video_file(fa, f, args)
+        except KeyboardInterrupt:
+            exit(0)
+        except Exception as _:  # noqa: F841
+            traceback.print_exc()
+            continue
 
     for vfile in tqdm(filelist, desc="dump audio"):
         try:
