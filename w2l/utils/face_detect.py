@@ -89,6 +89,22 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
         LandmarksType._2D,
         flip_input=False, device=device)
 
+    video_stream = cv2.VideoCapture(vidpath)
+    width = video_stream.get(cv2.CAP_PROP_FRAME_WIDTH)
+    height = video_stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    video_stream.release()
+
+    min_height = 270
+    min_width = 480
+
+    resize_ratio = min_width / float(width)
+    if height * resize_ratio < min_height:
+        resize_ratio = min_height / float(height)
+    target_width = int(np.round(width * resize_ratio))
+    target_height = int(np.round(height * resize_ratio))
+
+    should_resize = width > target_width or height > target_height
+
     i_image = 0
     rows = []
     pady1, pady2, padx1, padx2 = pads
@@ -97,8 +113,12 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
     for frames in tqdm(stream_video_as_batch(
             vidpath, face_detect_batch_size, face_detect_batch_size),
             desc="dump face", total=frame_count // face_detect_batch_size):
+        if should_resize:
+            x = np.array([cv2.resize(frame, (target_width, target_height)) for frame in frames])
+        else:
+            x = np.array(frames)
         if box[0] == -1:
-            rects = detector.get_detections_for_batch(np.array(frames))
+            rects = detector.get_detections_for_batch(x)
             for rect, frame in zip(rects, frames):
                 img_path = os.path.join(dump_dir, "img_{}.png".format(
                     i_image
@@ -113,6 +133,11 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
                     y2 = min(frame.shape[0], rect[3] + pady2)
                     x1 = max(0, rect[0] - padx1)
                     x2 = min(frame.shape[1], rect[2] + padx2)
+                    if should_resize:
+                        x1 = int(np.round(x1 / resize_ratio))
+                        x2 = int(np.round(x2 / resize_ratio))
+                        y1 = int(np.round(y1 / resize_ratio))
+                        y2 = int(np.round(y2 / resize_ratio))
                 else:
                     x1, x2, y1, y2 = (-1, -1, -1, -1)
                     face_path = None
