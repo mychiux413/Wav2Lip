@@ -94,7 +94,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
         print('Starting Epoch: {}'.format(global_epoch))
         running_sync_loss, running_rec_loss, running_perceptual_loss = 0., 0., 0.
         running_disc_real_loss, running_disc_fake_loss, running_target_loss = 0., 0., 0.
-        running_landmarks_loss = 0.
+        running_landmarks_loss, running_l1_loss, running_ssim_loss = 0., 0., 0.
         prog_bar = tqdm(enumerate(train_data_loader))
         for step, (x, indiv_mels, mel, gt, landmarks, masks) in prog_bar:
             B = x.size(0)
@@ -134,8 +134,10 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             masked_g = masks_for_g * g
             masked_gt = masks_for_g * gt
 
+            l1 = l1loss(g, gt)
+            ssim = ms_ssim_loss(masked_g, masked_gt)
             rec_loss = hparams.l1_wt * \
-                l1loss(g, gt) + hparams.ssim_wt * ms_ssim_loss(masked_g, masked_gt)
+                l1 + hparams.ssim_wt * ssim
 
             loss = hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss + \
                 (1. - hparams.syncnet_wt - hparams.disc_wt) * \
@@ -173,6 +175,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
             running_target_loss += loss.item()
             running_rec_loss += rec_loss.item()
+            running_l1_loss += l1.item()
+            running_ssim_loss += ssim.item()
             if hparams.syncnet_wt > 0.:
                 running_sync_loss += sync_loss.item()
             else:
@@ -199,7 +203,9 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
             next_step = step + 1
             prog_bar.set_description(
-                'Rec: {:04f}, Sync: {:04f}, Percep: {:04f} | Fake: {:04f}, Real: {:04f} | Landmarks: {:04f} | Target: {:04f}'.format(
+                'L1: {:03f}, SSIM: {:03f}, Rec: {:03f}, Sync: {:03f}, Percep: {:03f} | Fake: {:03f}, Real: {:03f} | Landmarks: {:03f} | Target: {:03f}'.format(
+                    running_l1_loss / next_step,
+                    running_ssim_loss / next_step,
                     running_rec_loss / next_step,
                     running_sync_loss / next_step,
                     running_perceptual_loss / next_step,
@@ -217,7 +223,7 @@ def eval_model(test_data_loader, global_step, device, model, disc):
     print('Evaluating for {} steps'.format(eval_steps))
     running_sync_loss, recon_losses, running_disc_real_loss, \
         running_disc_fake_loss, running_perceptual_loss, running_target_loss, \
-        running_landmarks_loss = [], [], [], [], [], [], []
+        running_landmarks_loss, running_l1_loss, running_ssim_loss = [], [], [], [], [], [], [], [], []
 
     landmarks_points_len = len(hparams.landmarks_points)
     for step, (x, indiv_mels, mel, gt, landmarks, masks) in enumerate((test_data_loader)):
@@ -263,7 +269,10 @@ def eval_model(test_data_loader, global_step, device, model, disc):
         masks_for_g = masks.permute((0, 2, 1, 3, 4))
         masked_g = masks_for_g * g
         masked_gt = masks_for_g * gt
-        rec_loss = hparams.l1_wt * l1loss(g, gt) + hparams.ssim_wt * ms_ssim_loss(masked_g, masked_gt)
+
+        l1 = l1loss(g, gt)
+        ssim = ms_ssim_loss(masked_g, masked_gt)
+        rec_loss = hparams.l1_wt * l1 + hparams.ssim_wt * ssim
 
         loss = hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss + \
             (1. - hparams.syncnet_wt - hparams.disc_wt) * \
@@ -271,6 +280,8 @@ def eval_model(test_data_loader, global_step, device, model, disc):
 
         running_target_loss.append(loss.item())
         recon_losses.append(rec_loss.item())
+        running_l1_loss.append(l1.item())
+        running_ssim_loss.append(ssim.item())
         running_sync_loss.append(sync_loss.item())
 
         if hparams.disc_wt > 0.:
@@ -281,7 +292,9 @@ def eval_model(test_data_loader, global_step, device, model, disc):
         if step > eval_steps:
             break
 
-    print('Rec: {:04f}, Sync: {:04f}, Percep: {:04f} | Fake: {:04f}, Real: {:04f} | Landmarks: {:04f} | Target: {:04f}'.format(
+    print('L1: {:03f}, SSIM: {:03f}, Rec: {:04f}, Sync: {:04f}, Percep: {:04f} | Fake: {:04f}, Real: {:04f} | Landmarks: {:04f} | Target: {:04f}'.format(
+        np.mean(running_l1_loss),
+        np.mean(running_ssim_loss),
         np.mean(recon_losses),
         np.mean(running_sync_loss),
         np.mean(running_perceptual_loss),
@@ -368,14 +381,14 @@ def main(args=None):
     # Dataset and Dataloader setup
     train_dataset = Wav2LipDataset('train', args.data_root,
                                    sampling_half_window_size_seconds=hparams.sampling_half_window_size_seconds,
-                                   unmask_fringe_width=hparams.unmask_fringe_width,
                                    limit=args.train_limit,
                                    filelists_dir=args.filelists_dir)
     test_dataset = Wav2LipDataset('val', args.data_root,
                                   sampling_half_window_size_seconds=hparams.sampling_half_window_size_seconds,
-                                  unmask_fringe_width=hparams.unmask_fringe_width, img_augment=False,
-                                  limit=args.val_limit,
-                                  filelists_dir=args.filelists_dir)
+                                  img_augment=False,
+                                  limit=300,  # val steps
+                                  filelists_dir=args.filelists_dir,
+                                  inner_shuffle=False)
 
     train_data_loader = data_utils.DataLoader(
         train_dataset, batch_size=hparams.batch_size,
@@ -383,7 +396,7 @@ def main(args=None):
 
     test_data_loader = data_utils.DataLoader(
         test_dataset, batch_size=hparams.batch_size,
-        num_workers=4)
+        num_workers=2)
 
     # Model
     model = Wav2Lip().to(device)

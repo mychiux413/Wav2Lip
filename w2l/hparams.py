@@ -1,5 +1,6 @@
 from glob import glob
 import os
+import json
 
 
 class HParams:
@@ -9,6 +10,17 @@ class HParams:
         for key, value in kwargs.items():
             self.data[key] = value
 
+        self.overwirte_with_env()
+
+    def __getattr__(self, key):
+        if key not in self.data:
+            raise AttributeError("'HParams' object has no attribute %s" % key)
+        return self.data[key]
+
+    def set_hparam(self, key, value):
+        self.data[key] = value
+
+    def overwirte_with_env(self):
         # **** environ control ****
         for key, value in self.data.items():
             env_key = "W2L_" + key.upper()
@@ -23,13 +35,18 @@ class HParams:
                     break
         # *************************
 
-    def __getattr__(self, key):
-        if key not in self.data:
-            raise AttributeError("'HParams' object has no attribute %s" % key)
-        return self.data[key]
+    def to_json(self, path):
+        with open(path, 'w') as f:
+            json.dump(self.data, f)
 
-    def set_hparam(self, key, value):
-        self.data[key] = value
+    @classmethod
+    def from_json(cls, path):
+        assert os.path.exists(path)
+        with open(path, 'r') as f:
+            data = json.load(f)
+            obj = cls()
+            obj.data = data
+            return obj
 
 
 # Default hyperparameters
