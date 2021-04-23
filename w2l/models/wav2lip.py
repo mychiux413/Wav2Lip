@@ -9,6 +9,7 @@ from w2l.models.conv import Conv2dTranspose, Conv2d, nonorm_Conv2d, evaluate_con
 from w2l.models.conv import evaluate_new_size_after_transpose_conv
 from w2l.models.mobilefacenet import Linear_block, BatchNorm1d, Flatten, Linear
 
+
 class GDC(nn.Module):
     def __init__(self, channels, embedding_size):
         super(GDC, self).__init__()
@@ -25,6 +26,7 @@ class GDC(nn.Module):
         x = self.bn(x)
         return x
 
+
 class Wav2Lip(nn.Module):
     def __init__(self):
         super(Wav2Lip, self).__init__()
@@ -35,14 +37,15 @@ class Wav2Lip(nn.Module):
 
         last_face_x_size = hp.img_size
         last_face_y_size = hp.img_size
-        face_encoder_channels = [6]
+        FIRST_CHANNELS = 3 if hp.merge_ref else 6
+        face_encoder_channels = [FIRST_CHANNELS]
 
         print("n_layers", n_layers)
         for i in range(n_layers):
             if i == 0:
                 sequentials.append(
                     nn.Sequential(
-                        Conv2d(6, channels * 2, kernel_size=7, stride=1, padding=3))
+                        Conv2d(FIRST_CHANNELS, channels * 2, kernel_size=7, stride=1, padding=3))
                 )
                 last_face_x_size = evaluate_new_size_after_conv(
                     last_face_x_size, 7, 1, 3)

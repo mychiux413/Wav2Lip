@@ -34,7 +34,12 @@ def save_sample_images(x, g, gt, global_step, checkpoint_dir, g_landmarks):
         0, 2, 3, 4, 1) * 255.).astype(np.uint8)
     # gt: (B, T, H, W, 3)
 
-    refs, inps = x[..., 3:], x[..., :3]
+    if hparams.merge_ref:
+        refs = np.zeros_like(x, dtype=np.uint8)
+        inps = x
+    else:
+        refs, inps = x[..., 3:], x[..., :3]
+
     folder = join(checkpoint_dir, "samples_step{:09d}".format(global_step))
     if not os.path.exists(folder):
         os.mkdir(folder)
@@ -45,8 +50,8 @@ def save_sample_images(x, g, gt, global_step, checkpoint_dir, g_landmarks):
             for x_pos, y_pos in landmark:
                 x_pos = int(x_pos * hparams.img_size)
                 y_pos = int(y_pos * hparams.img_size)
-                gt[b, t, (y_pos-1):(y_pos+1), (x_pos-1):(x_pos+1), :] = 0
-                gt[b, t, (y_pos-1):(y_pos+1), (x_pos-1):(x_pos+1), 1] = 255
+                gt[b, t, (y_pos-2):(y_pos+2), (x_pos-2):(x_pos+2), :] = 0
+                gt[b, t, (y_pos-2):(y_pos+2), (x_pos-2):(x_pos+2), 1] = 255
 
     collage = np.concatenate((refs, inps, g, gt), axis=-2)
     for batch_idx, c in enumerate(collage):
