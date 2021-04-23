@@ -81,7 +81,7 @@ def detect_face_and_dump_from_image(img_path, dump_dir, device, face_size, fps=2
 def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_detect_batch_size=2,
                                     pads=None, box=None, smooth=False, smooth_size=5):
     if pads is None:
-        pads = (0, 0, 0, 0)
+        pads = (0, 20, 0, 0)
     if box is None:
         box = (-1, -1, -1, -1)
     os.makedirs(dump_dir, exist_ok=True)
