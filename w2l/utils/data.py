@@ -44,7 +44,7 @@ class Dataset(object):
 
     def __init__(self, split, data_root, inner_shuffle=True,
                  limit=0, sampling_half_window_size_seconds=2.0,
-                 unmask_fringe_width=10, img_augment=True,
+                 img_augment=True,
                  filelists_dir='filelists'):
         self.all_videos = list(filter(
             lambda vidname: os.path.exists(join(vidname, "audio.wav")),
@@ -92,12 +92,6 @@ class Dataset(object):
                            for vidname in self.all_videos]
             self.all_videos_p = np.array(imgs_counts) / np.sum(imgs_counts)
         self.sampling_half_window_size_seconds = sampling_half_window_size_seconds
-        self.unmask_fringe_width = int(unmask_fringe_width)
-        self.fringe_x1 = self.unmask_fringe_width
-        self.fringe_x2 = self.img_size - self.unmask_fringe_width
-        assert self.fringe_x2 > self.fringe_x1
-        self.fringe_y2 = self.img_size - self.unmask_fringe_width
-        assert self.fringe_y2 > self.img_size // 2
         self.img_augment = img_augment
         if not self.inner_shuffle:
             self.data_len = len(self.all_videos)
@@ -159,7 +153,7 @@ class Dataset(object):
         return mels
 
     def crop_audio_window(self, spec, start_frame):
-        if type(start_frame) == int:
+        if isinstance(start_frame, int):
             start_frame_num = start_frame
         else:
             start_frame_num = self.get_frame_id(
@@ -290,7 +284,10 @@ class Wav2LipDataset(Dataset):
             wrong_window = cat[:, self.syncnet_T:(self.syncnet_T * 2), :, :]
             y = cat[:, (self.syncnet_T * 2):, :, :]
 
-            x = torch.cat([window, wrong_window], axis=0)
+            if hparams.merge_ref:
+                x = window + wrong_window
+            else:
+                x = torch.cat([window, wrong_window], axis=0)            
 
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
             indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)

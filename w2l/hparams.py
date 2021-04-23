@@ -141,7 +141,7 @@ hparams = HParams(
     ssim_wt=0.5,
     landmarks_wt=0.2,
     landmarks_points=[3, 6, 9, 12, 15, 32, 34, 36, 49, 52, 55, 58, 63, 67],
-
+    merge_ref=False,
 )
 
 
