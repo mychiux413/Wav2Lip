@@ -73,7 +73,8 @@ l1loss = nn.L1Loss()
 
 
 def get_landmarks_loss(g_landmarks, gt_landmarks):
-    axis_delta = g_landmarks[:, :, :, 0] - gt_landmarks[:, :, :, 0] + g_landmarks[:, :, :, 1] - gt_landmarks[:, :, :, 1]
+    axis_delta = g_landmarks[:, :, :, 0] - gt_landmarks[:, :,
+                                                        :, 0] + g_landmarks[:, :, :, 1] - gt_landmarks[:, :, :, 1]
     square_mean = torch.mean(torch.mean(axis_delta ** 2, dim=0), dim=-1)
     loss_sum_T = torch.sum(square_mean)
     return loss_sum_T / hparams.syncnet_T
@@ -131,7 +132,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
             gt_landmarks = landmarks[:, :, hparams.landmarks_points].reshape(
                 (B, hparams.syncnet_T, landmarks_points_len, 2))
-            g_landmarks = g_landmarks.reshape((B, hparams.syncnet_T, landmarks_points_len, 2))
+            g_landmarks = g_landmarks.reshape(
+                (B, hparams.syncnet_T, landmarks_points_len, 2))
             gt_landmarks = gt_landmarks.to(device)
             landmarks_loss = get_landmarks_loss(g_landmarks, gt_landmarks)
 
@@ -172,7 +174,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             running_landmarks_loss += landmarks_loss.item()
 
             if global_step % checkpoint_interval == 0:
-                save_sample_images(x, g, gt, global_step, checkpoint_dir, g_landmarks)
+                save_sample_images(x, g, gt, global_step,
+                                   checkpoint_dir, g_landmarks)
 
             # Logs
             global_step += 1
@@ -221,6 +224,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                 ))
 
         global_epoch += 1
+    return average_sync_loss
 
 
 def eval_model(test_data_loader, global_step, device, model, disc):
@@ -228,7 +232,8 @@ def eval_model(test_data_loader, global_step, device, model, disc):
     print('Evaluating for {} steps'.format(eval_steps))
     running_sync_loss, recon_losses, running_disc_real_loss, \
         running_disc_fake_loss, running_perceptual_loss, running_target_loss, \
-        running_landmarks_loss, running_l1_loss, running_ssim_loss = [], [], [], [], [], [], [], [], []
+        running_landmarks_loss, running_l1_loss, running_ssim_loss = [
+        ], [], [], [], [], [], [], [], []
 
     landmarks_points_len = len(hparams.landmarks_points)
     for step, (x, indiv_mels, mel, gt, landmarks, masks) in enumerate((test_data_loader)):
@@ -252,7 +257,8 @@ def eval_model(test_data_loader, global_step, device, model, disc):
 
         gt_landmarks = landmarks[:, :, hparams.landmarks_points].reshape(
             (B, hparams.syncnet_T, landmarks_points_len, 2))
-        g_landmarks = g_landmarks.reshape((B, hparams.syncnet_T, landmarks_points_len, 2))
+        g_landmarks = g_landmarks.reshape(
+            (B, hparams.syncnet_T, landmarks_points_len, 2))
         gt_landmarks = gt_landmarks.to(device)
         landmarks_loss = get_landmarks_loss(g_landmarks, gt_landmarks)
 
@@ -437,10 +443,12 @@ def main(args=None):
 
     model = nn.DataParallel(model)
     # Train!
-    train(device, model, disc, train_data_loader, test_data_loader, optimizer, disc_optimizer,
-          checkpoint_dir=checkpoint_dir,
-          checkpoint_interval=hparams.checkpoint_interval,
-          nepochs=hparams.nepochs)
+    avg_syncloss = train(
+        device, model, disc, train_data_loader, test_data_loader, optimizer, disc_optimizer,
+        checkpoint_dir=checkpoint_dir,
+        checkpoint_interval=hparams.checkpoint_interval,
+        nepochs=hparams.nepochs)
+    return avg_syncloss
 
 
 if __name__ == "__main__":
