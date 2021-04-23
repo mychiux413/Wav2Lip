@@ -11,11 +11,16 @@ def create_client():
 
 def list_voices(client):
     voices_table = {}
+    voices = {}
+    for i, v in enumerate(sorted(client.list_voices().voices, key=lambda v: v.name)):
+        voices[v.name] = "{}-{}-{}".format(i, v.name, v.ssml_gender.name)
+
     for voice in client.list_voices().voices:
         for code in voice.language_codes:
             if code not in voices_table:
                 voices_table[code] = []
-            voices_table[code].append(voice.name)
+            voices_table[code].append(
+                {'name': voice.name, 'display': voices[voice.name]})
     return voices_table
 
 
