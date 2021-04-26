@@ -129,15 +129,19 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
                 ))
                 i_image += 1
                 if rect is not None:
-                    y1 = max(0, rect[1] - pady1)
-                    y2 = min(frame.shape[0], rect[3] + pady2)
-                    x1 = max(0, rect[0] - padx1)
-                    x2 = min(frame.shape[1], rect[2] + padx2)
+                    y1 = max(0, rect[1])
+                    y2 = min(frame.shape[0], rect[3])
+                    x1 = max(0, rect[0])
+                    x2 = min(frame.shape[1], rect[2])
                     if should_resize:
                         x1 = int(np.round(x1 / resize_ratio))
                         x2 = int(np.round(x2 / resize_ratio))
                         y1 = int(np.round(y1 / resize_ratio))
                         y2 = int(np.round(y2 / resize_ratio))
+                    y1 = max(0, y1 - pady1)
+                    y2 = min(frame.shape[0], y2 + pady2)
+                    x1 = max(0, x1 - padx1)
+                    x2 = min(frame.shape[1], x2 + padx2)
                 else:
                     x1, x2, y1, y2 = (-1, -1, -1, -1)
                     face_path = None
