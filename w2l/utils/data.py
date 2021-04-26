@@ -16,7 +16,6 @@ import torchvision
 augment = torchvision.transforms.Compose([
     torchvision.transforms.ColorJitter(brightness=(
         0.6, 1.4), contrast=(0.6, 1.4), saturation=(0.6, 1.4), hue=0),
-    torchvision.transforms.RandomHorizontalFlip(p=0.2),
 ])
 
 

@@ -93,7 +93,7 @@ def process_audio_file(vfile, args, template):
     os.makedirs(fulldir, exist_ok=True)
 
     wavpath = os.path.join(fulldir, 'audio.wav')
-    if os.path.exists(wavpath):
+    if os.path.exists(wavpath) and os.stat(wavpath).st_size > 0:
         return
 
     command = template.format(vfile, wavpath)
@@ -105,7 +105,7 @@ def process_mouth_position(model, args, vfile):
     dirname = vfile.split('/')[-2]
     fulldir = os.path.join(args.preprocessed_root, dirname, vidname)
     config_path = os.path.join(fulldir, "landmarks.npy")
-    if os.path.exists(config_path):
+    if os.path.exists(config_path) and os.stat(config_path).st_size > 0:
         return
     config = {}
 
@@ -150,7 +150,7 @@ def process_blur_score(job):
     dirname = vfile.split('/')[-2]
     fulldir = os.path.join(args.preprocessed_root, dirname, vidname)
     config_path = os.path.join(fulldir, "blur.npy")
-    if os.path.exists(config_path):
+    if os.path.exists(config_path) and os.stat(config_path).st_size > 0:
         return False
     config = {}
     for fname in filter(lambda name: name.endswith('.png'), os.listdir(fulldir)):
@@ -189,9 +189,9 @@ def main():
 
     args = parser.parse_args()
 
-    fa = face_detection.FaceAlignment(
-        face_detection.LandmarksType._2D, flip_input=False,
-        device='cuda')
+    # fa = face_detection.FaceAlignment(
+    #     face_detection.LandmarksType._2D, flip_input=False,
+    #     device='cuda')
 
     template = "ffmpeg -loglevel panic -y -i '{}' -strict -2 '{}'"
 
@@ -200,14 +200,14 @@ def main():
 
     filelist = glob(os.path.join(args.data_root, '*/*.mp4'))
 
-    for f in tqdm(filelist, total=len(filelist), desc='dump video'):
-        try:
-            process_video_file(fa, f, args)
-        except KeyboardInterrupt:
-            exit(0)
-        except Exception as _:  # noqa: F841
-            traceback.print_exc()
-            continue
+    # for f in tqdm(filelist, total=len(filelist), desc='dump video'):
+    #     try:
+    #         process_video_file(fa, f, args)
+    #     except KeyboardInterrupt:
+    #         exit(0)
+    #     except Exception as _:  # noqa: F841
+    #         traceback.print_exc()
+    #         continue
 
     for vfile in tqdm(filelist, desc="dump audio"):
         try:

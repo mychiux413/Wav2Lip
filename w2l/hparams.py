@@ -101,15 +101,15 @@ hparams = HParams(
     img_size=192,  # 96 or 192
     fps=30,
 
-    batch_size=4,
+    batch_size=6,
     initial_learning_rate=5e-5,
     opt_amsgrad=True,
     opt_weight_decay=0.0,
     # ctrl + c, stop whenever eval loss is consistently greater than train loss for ~10 epochs
     nepochs=200000000000000000,
-    num_workers=8,
-    checkpoint_interval=1000,
-    eval_interval=1000,
+    num_workers=4,
+    checkpoint_interval=7000,
+    eval_interval=7000,
     save_optimizer_state=True,
 
     sampling_half_window_size_seconds=1.0,
@@ -140,7 +140,7 @@ hparams = HParams(
     l1_wt=0.5,
     ssim_wt=0.5,
     landmarks_wt=0.2,
-    landmarks_points=[3, 6, 9, 12, 15, 32, 34, 36, 49, 52, 55, 58, 63, 67],
+    landmarks_points=[2, 5, 8, 11, 14, 31, 33, 35, 48, 51, 54, 57, 62, 66],
     merge_ref=False,
 )
 
