@@ -19,8 +19,10 @@ def objective(trial):
         'expand_mouth_width_ratio', 0.3, 0.8, log=False)
     expand_mouth_height_ratio = trial.suggest_float(
         'expand_mouth_height_ratio', 0.3, 0.8, log=False)
-    syncnet_lr = trial.suggest_float(
-        'syncnet_lr', 1e-6, 1e-3, log=True)
+    initial_learning_rate = trial.suggest_float(
+        'initial_learning_rate', 1e-7, 1e-3, log=True)
+    amsgrad = trial.suggest_categorical('amsgrad', [True, False])
+    opt_weight_decay = trial.suggest_categorical('opt_weight_decay', [0.0, 0.01, 0.001])
     syncnet_wt = trial.suggest_float(
         'syncnet_wt', 0.0, 2.0, log=False)
     disc_wt = trial.suggest_float(
@@ -46,7 +48,12 @@ def objective(trial):
     hparams.img_augment = img_augment
     hparams.expand_mouth_width_ratio = expand_mouth_width_ratio
     hparams.expand_mouth_height_ratio = expand_mouth_height_ratio
-    hparams.syncnet_lr = syncnet_lr
+    hparams.initial_learning_rate = initial_learning_rate
+    hparams.disc_initial_learning_rate = initial_learning_rate
+    hparams.opt_amsgrad = amsgrad
+    hparams.syncnet_opt_amsgrad = amsgrad
+    hparams.opt_weight_decay = opt_weight_decay
+    hparams.syncnet_opt_weight_decay = opt_weight_decay
     hparams.syncnet_wt = syncnet_wt
     hparams.disc_wt = disc_wt
     hparams.l1_wt = l1_wt
@@ -59,7 +66,7 @@ def objective(trial):
 
 
 def main():
-    study = optuna.create_study(study_name='w2l-experiment', storage="sqlite:///exp210423.sqlite")  # Create a new study.
+    study = optuna.create_study(study_name='w2l-experiment', storage="sqlite:///exp210426.sqlite")  # Create a new study.
     study.optimize(objective, n_trials=500)  # Invoke optimization of the objective function.
 
 
