@@ -202,7 +202,7 @@ def main():
         face_detection.LandmarksType._2D, flip_input=False,
         device='cuda')
 
-    template = "ffmpeg -loglevel panic -y -i '{}' -strict -2 '{}'"
+    template = "ffmpeg -loglevel panic -y -i '{}' -strict -2 -vn -codec:a libvorbis '{}'"
 
     print('Started processing from {} to {}'.format(
         args.data_root, args.preprocessed_root))
