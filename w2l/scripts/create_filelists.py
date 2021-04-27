@@ -25,7 +25,7 @@ class SyncnetDataset(Dataset):
                 continue
             for vid_dirname in os.listdir(dirpath):
                 video_path = os.path.join(dirpath, vid_dirname)
-                wavpath = os.path.join(video_path, "audio.wav")
+                wavpath = os.path.join(video_path, "audio.ogg")
                 if len(os.listdir(video_path)) < 3 * hp.syncnet_T + 2:
                     print("insufficient files of dir:", vid_dirname)
                     continue
@@ -36,14 +36,14 @@ class SyncnetDataset(Dataset):
 
         self.img_names = {
             vidname: sorted(
-                glob(os.path.join(vidname, '*.png')),
+                glob(os.path.join(vidname, '*.jpg')),
                 key=lambda name: int(os.path.basename(name).split('.')[0])) for vidname in self.all_videos
         }
 
         self.orig_mels = {}
         for vidname in tqdm(self.all_videos, desc="load mels"):
             mel_path = os.path.join(vidname, "mel.npy")
-            wavpath = os.path.join(vidname, "audio.wav")
+            wavpath = os.path.join(vidname, "audio.ogg")
             if os.path.exists(mel_path):
                 try:
                     orig_mel = np.load(mel_path)
@@ -365,7 +365,7 @@ def main():
             if args.min_img_size > 0:
                 paths = []
                 for fname in os.listdir(dataname_path):
-                    if not fname.endswith('.png'):
+                    if not fname.endswith('.jpg'):
                         continue
                     path = os.path.join(dataname_path, fname)
                     paths.append(path)

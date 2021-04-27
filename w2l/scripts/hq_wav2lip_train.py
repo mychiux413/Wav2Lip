@@ -72,7 +72,7 @@ def save_sample_images(x, g, gt, global_step, checkpoint_dir, g_landmarks, gt_la
     collage = np.concatenate((refs, inps, g, gt), axis=-2)
     for batch_idx, c in enumerate(collage):
         for t in range(len(c)):
-            cv2.imwrite('{}/{}_{}.png'.format(folder, batch_idx, t), c[t])
+            cv2.imwrite('{}/{}_{}.jpg'.format(folder, batch_idx, t), c[t])
 
 
 logloss = nn.BCELoss()
@@ -462,12 +462,12 @@ def main(args=None):
 
     model = nn.DataParallel(model)
     # Train!
-    avg_syncloss = train(
+    avg_fully_ssim_loss = train(
         device, model, disc, train_data_loader, test_data_loader, optimizer, disc_optimizer,
         checkpoint_dir=checkpoint_dir,
         checkpoint_interval=hparams.checkpoint_interval,
         nepochs=hparams.nepochs)
-    return avg_syncloss
+    return avg_fully_ssim_loss
 
 
 if __name__ == "__main__":

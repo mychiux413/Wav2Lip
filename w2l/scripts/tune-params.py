@@ -66,7 +66,10 @@ def objective(trial):
 
 
 def main():
-    study = optuna.create_study(study_name='w2l-experiment', storage="sqlite:///exp210426.sqlite")  # Create a new study.
+    study = optuna.create_study(
+        study_name='w2l-experiment',
+        storage="sqlite:///exp210426.sqlite",
+        load_if_exists=True)  # Create a new study.
     study.optimize(objective, n_trials=500)  # Invoke optimization of the objective function.
 
 

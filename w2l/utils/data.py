@@ -46,11 +46,11 @@ class Dataset(object):
                  img_augment=True,
                  filelists_dir='filelists'):
         self.all_videos = list(filter(
-            lambda vidname: os.path.exists(join(vidname, "audio.wav")),
+            lambda vidname: os.path.exists(join(vidname, "audio.ogg")),
             get_image_list(data_root, split, limit=limit, filelists_dir=filelists_dir)))
         self.img_names = {
             vidname: sorted(
-                glob(join(vidname, '*.png')),
+                glob(join(vidname, '*.jpg')),
                 key=lambda name: int(os.path.basename(name).split('.')[0])) for vidname in self.all_videos
         }
         self.landmarks = None
@@ -67,7 +67,7 @@ class Dataset(object):
         self.orig_mels = {}
         for vidname in tqdm(self.all_videos, desc="load mels"):
             mel_path = join(vidname, "mel.npy")
-            wavpath = join(vidname, "audio.wav")
+            wavpath = join(vidname, "audio.ogg")
             assert os.path.exists(wavpath), wavpath
             if os.path.exists(mel_path):
                 try:
@@ -112,7 +112,7 @@ class Dataset(object):
 
         window_fnames = []
         for frame_id in range(start_id, start_id + self.syncnet_T):
-            frame = join(vidname, '{}.png'.format(frame_id))
+            frame = join(vidname, '{}.jpg'.format(frame_id))
             if not isfile(frame):
                 return None
             window_fnames.append(frame)
