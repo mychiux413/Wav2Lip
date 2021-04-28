@@ -15,6 +15,7 @@ from w2l.utils.env import use_cuda, device
 from w2l.models import SyncNet_color as SyncNet
 from w2l.models import Wav2Lip, Wav2Lip_disc_qual
 from w2l.utils.loss import ms_ssim_loss
+import random
 
 global_step = 0
 global_epoch = 0
@@ -29,6 +30,13 @@ def reset_global():
     global global_epoch
     global_step = 0
     global_epoch = 0
+
+    SEED = 4321
+    random.seed(SEED)
+    os.environ['PYTHONHASHSEED'] = str(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    torch.cuda.manual_seed(SEED)
 
 
 def save_sample_images(x, g, gt, global_step, checkpoint_dir, g_landmarks, gt_landmarks):
