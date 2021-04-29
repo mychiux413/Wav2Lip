@@ -232,6 +232,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                         test_data_loader, global_step, device, model, disc)
 
                     if average_sync_loss < .6:
+                        print("set syncnet_wt as", 0.03)
                         hparams.set_hparam('syncnet_wt', 0.03)
 
             next_step = step + 1

@@ -46,11 +46,11 @@ class Dataset(object):
                  img_augment=True,
                  filelists_dir='filelists'):
         self.all_videos = list(filter(
-            lambda vidname: os.path.exists(join(vidname, "audio.ogg")),
+            lambda vidname: os.path.exists(join(vidname, "audio.wav")),
             get_image_list(data_root, split, limit=limit, filelists_dir=filelists_dir)))
         self.img_names = {
             vidname: sorted(
-                glob(join(vidname, '*.jpg')),
+                glob(join(vidname, '*.png')),
                 key=lambda name: int(os.path.basename(name).split('.')[0])) for vidname in self.all_videos
         }
         self.landmarks = None
@@ -67,7 +67,7 @@ class Dataset(object):
         self.orig_mels = {}
         for vidname in tqdm(self.all_videos, desc="load mels"):
             mel_path = join(vidname, "mel.npy")
-            wavpath = join(vidname, "audio.ogg")
+            wavpath = join(vidname, "audio.wav")
             assert os.path.exists(wavpath), wavpath
             if os.path.exists(mel_path):
                 try:
@@ -84,23 +84,15 @@ class Dataset(object):
             self.orig_mels[vidname] = orig_mel
         self.data_root = data_root
         self.inner_shuffle = inner_shuffle
-        self.all_videos_p = None
         self.linear_space = np.array(range(len(self.all_videos)))
-        if inner_shuffle:
-            imgs_counts = [len(self.img_names[vidname])
-                           for vidname in self.all_videos]
-            self.all_videos_p = np.array(imgs_counts) / np.sum(imgs_counts)
         self.sampling_half_window_size_seconds = sampling_half_window_size_seconds
         self.img_augment = img_augment
-        if not self.inner_shuffle:
-            self.data_len = len(self.all_videos)
-        else:
-            self.data_len = sum([len(names) for _, names in self.img_names.items()]) // hparams.syncnet_T
+        self.data_len = len(self.all_videos)
         print("data length: ", self.data_len)
 
     def get_vidname(self, idx):
         if self.inner_shuffle:
-            idx = np.random.choice(self.linear_space, p=self.all_videos_p)
+            idx = np.random.choice(self.linear_space)
         return self.all_videos[idx]
 
     def get_frame_id(self, frame):
@@ -112,7 +104,7 @@ class Dataset(object):
 
         window_fnames = []
         for frame_id in range(start_id, start_id + self.syncnet_T):
-            frame = join(vidname, '{}.jpg'.format(frame_id))
+            frame = join(vidname, '{}.png'.format(frame_id))
             if not isfile(frame):
                 return None
             window_fnames.append(frame)
@@ -270,7 +262,6 @@ class Wav2LipDataset(Dataset):
             window = self.prepare_window(window)  # 3 x T x H x W
             y = torch.FloatTensor(window)
             wrong_window = self.prepare_window(wrong_window)  # 3 x T x H x W
-            window, wrong_window, landmarks, masks = self.mask_mouth(window, wrong_window, vidname, window_fnames)
 
             cat = np.concatenate([window, wrong_window, y], axis=1)
             cat = torch.FloatTensor(cat)
@@ -283,10 +274,13 @@ class Wav2LipDataset(Dataset):
             wrong_window = cat[:, self.syncnet_T:(self.syncnet_T * 2), :, :]
             y = cat[:, (self.syncnet_T * 2):, :, :]
 
+            window, wrong_window, landmarks, masks = self.mask_mouth(
+                window, wrong_window, vidname, window_fnames)
+
             if hparams.merge_ref:
                 x = window + wrong_window
             else:
-                x = torch.cat([window, wrong_window], axis=0)            
+                x = torch.cat([window, wrong_window], axis=0)
 
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
             indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)
