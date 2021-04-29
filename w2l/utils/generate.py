@@ -73,6 +73,31 @@ def datagen(config_path, mels, batch_size=128, start_frame=0):
         yield img_batch, mel_batch, frame_batch, coords_batch
 
 
+def create_ellipse_filter():
+    img_size = 640
+
+    width = img_size
+    height = img_size // 2
+
+    a = (width // 2) - 20
+    b = (height // 2) - 10
+
+    filt = np.ones([height, width, 1], dtype=np.float32)
+    anti_filt = np.zeros([height, width, 1], dtype=np.float32)
+
+    for ix in range(width):
+        for iy in range(height):
+            x = ix - width // 2
+            y = iy - height // 2
+            delta = (np.sqrt(((x ** 2) / (a ** 2)) + ((y ** 2) / (b ** 2))) - 1.) * 3.0
+            if delta < 0.:
+                continue
+            v = min(delta, 1.0)
+            filt[iy, ix] = 1.0 - v
+            anti_filt[iy, ix] = v
+    return filt, anti_filt
+
+
 def generate_video(face_config_path, audio_path, model_path, output_path, face_fps=25,
                    batch_size=128, num_mels=80, mel_step_size=16, sample_rate=16000,
                    output_fps=None, output_crf=0, start_seconds=0.0):
@@ -92,6 +117,7 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
         audio_path, face_fps,
         num_mels=num_mels, mel_step_size=mel_step_size, sample_rate=sample_rate)
     gen = datagen(face_config_path, mels, batch_size=batch_size, start_frame=start_frame)
+    face_filter, face_anti_filter = create_ellipse_filter()
     for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, total=len(mels) // batch_size)):
         if i == 0:
             model = load_model(model_path)
@@ -116,9 +142,15 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
             y1, y2, x1, x2 = c
             face_width = x2 - x1
             face_height = y2 - y1
+            half_face_height = face_height // 2
+            y1 = y2 - half_face_height
+            p = p[hparams.img_size // 2:]
             if face_width > 0 and face_height > 0:
-                p = cv2.resize(p.astype(np.uint8), (face_width, face_height))
-                f[y1:y2, x1:x2] = p
+                p = cv2.resize(p, (face_width, half_face_height))
+                face_for_p = f[y1:y2, x1:x2].astype(np.float32)
+                face_filt = np.expand_dims(cv2.resize(face_filter, (face_width, half_face_height)), -1)
+                face_anti_filt = np.expand_dims(cv2.resize(face_anti_filter, (face_width, half_face_height)), -1)
+                f[y1:y2, x1:x2] = (p * face_filt + face_for_p * face_anti_filt).astype(np.uint8)
             out.write(f)
 
     out.release()

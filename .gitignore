@@ -159,6 +159,7 @@ avspeech/
 data/
 temp/
 datasets/
+datasets-new/
 generate/
 temp*
 checkpoints/
