@@ -195,6 +195,8 @@ def main():
         '--facenet_batch_size', help='Batch size of facenet', default=64, type=int)
     parser.add_argument(
         '--limit', help='Limit dump files', default=0, type=int)
+    parser.add_argument(
+        '--exclude', help='exclude dir with comma separated', default=None, type=str)
 
     args = parser.parse_args()
 
@@ -208,12 +210,18 @@ def main():
         args.data_root, args.preprocessed_root))
 
     filelist = glob(os.path.join(args.data_root, '*/*.mp4'))
+    exclude_dirs = tuple()
+    if args.exclude is not None:
+        excludes = args.exclude.split(',')
+        exclude_dirs = tuple(set([os.path.join(args.data_root, ex) for ex in excludes]))
     if args.limit > 0:
         print("limit dump files to:", args.limit)
         np.random.seed(1234)
         filelist = np.random.choice(filelist, size=args.limit, replace=False)
 
     for f in tqdm(filelist, total=len(filelist), desc='dump video'):
+        if f.startswith(exclude_dirs):
+            continue
         try:
             process_video_file(fa, f, args)
         except KeyboardInterrupt:
@@ -223,6 +231,8 @@ def main():
             continue
 
     for vfile in tqdm(filelist, desc="dump audio"):
+        if vfile.startswith(exclude_dirs):
+            continue
         try:
             process_audio_file(vfile, args, template)
         except KeyboardInterrupt:
@@ -233,6 +243,8 @@ def main():
 
     facenet_model = load_facenet_model()
     for vfile in tqdm(filelist, desc="dump landmarks"):
+        if vfile.startswith(exclude_dirs):
+            continue
         try:
             with torch.no_grad():
                 process_mouth_position(facenet_model, args, vfile)
@@ -245,6 +257,8 @@ def main():
 
     def gen():
         for vfile in tqdm(filelist, desc="dump blur scores"):
+            if vfile.startswith(exclude_dirs):
+                continue
             yield args, vfile
 
     with Pool(hp.num_workers) as p:
