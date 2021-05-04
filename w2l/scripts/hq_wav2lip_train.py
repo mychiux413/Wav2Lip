@@ -16,6 +16,7 @@ from w2l.models import SyncNet_color as SyncNet
 from w2l.models import Wav2Lip, Wav2Lip_disc_qual
 from w2l.utils.loss import ms_ssim_loss
 import random
+import gc
 
 global_step = 0
 global_epoch = 0
@@ -115,13 +116,14 @@ def get_sync_loss(mel, g):
 
 
 def train(device, model, disc, train_data_loader, test_data_loader, optimizer, disc_optimizer,
-          checkpoint_dir=None, checkpoint_interval=None, nepochs=None):
+          checkpoint_dir=None, checkpoint_interval=None, nepochs=None, K=1):
     global global_step, global_epoch
     # resumed_step = global_step
     landmarks_points_len = len(hparams.landmarks_points)
 
     average_fully_ssim_loss = None
     while global_epoch < nepochs:
+        gc.collect()
         print('Starting Epoch: {}'.format(global_epoch))
         running_sync_loss, running_rec_loss, running_perceptual_loss = 0., 0., 0.
         running_disc_real_loss, running_disc_fake_loss, running_target_loss = 0., 0., 0.
@@ -140,8 +142,6 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             gt = gt.to(device)
             masks = masks.to(device)
             # Train generator now. Remove ALL grads.
-            optimizer.zero_grad()
-            disc_optimizer.zero_grad()
 
             g, g_landmarks = model(indiv_mels, x)
 
@@ -174,12 +174,12 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             loss = hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss + \
                 (1. - hparams.syncnet_wt - hparams.disc_wt) * \
                 rec_loss + landmarks_loss * hparams.landmarks_wt
-
+            loss /= K
             loss.backward()
-            optimizer.step()
 
-            # Remove all gradients before Training disc
-            disc_optimizer.zero_grad()
+            if global_step % K == 0:
+                optimizer.step()
+                optimizer.zero_grad()
 
             pred = disc(gt)
             disc_real_loss = F.binary_cross_entropy(
@@ -189,10 +189,12 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             disc_fake_loss = F.binary_cross_entropy(
                 pred, torch.zeros((len(pred), 1)).to(device))
 
-            disc_loss = disc_real_loss + disc_fake_loss
+            disc_loss = (disc_real_loss + disc_fake_loss) / K / 2.
             disc_loss.backward()
 
-            disc_optimizer.step()
+            if global_step % K == 0:
+                disc_optimizer.step()
+                disc_optimizer.zero_grad()
 
             running_disc_real_loss += disc_real_loss.item()
             running_disc_fake_loss += disc_fake_loss.item()
@@ -236,18 +238,20 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                         hparams.set_hparam('syncnet_wt', 0.03)
 
             next_step = step + 1
-            prog_bar.set_description(
-                'L1: {:03f}, SSIM: {:03f}, Rec: {:03f}, Sync: {:03f}, Percep: {:03f} | Fake: {:03f}, Real: {:03f} | Landmarks: {:03f} | Target: {:03f}'.format(
-                    running_l1_loss / next_step,
-                    running_ssim_loss / next_step,
-                    running_rec_loss / next_step,
-                    running_sync_loss / next_step,
-                    running_perceptual_loss / next_step,
-                    running_disc_fake_loss / next_step,
-                    running_disc_real_loss / next_step,
-                    running_landmarks_loss / next_step,
-                    running_target_loss / next_step,
-                ))
+
+            if global_step % K == 0:
+                prog_bar.set_description(
+                    'L1: {:03f}, SSIM: {:03f}, Rec: {:03f}, Sync: {:03f}, Percep: {:03f} | Fake: {:03f}, Real: {:03f} | Landmarks: {:03f} | Target: {:03f}'.format(
+                        running_l1_loss / next_step,
+                        running_ssim_loss / next_step,
+                        running_rec_loss / next_step,
+                        running_sync_loss / next_step,
+                        running_perceptual_loss / next_step,
+                        running_disc_fake_loss / next_step,
+                        running_disc_real_loss / next_step,
+                        running_landmarks_loss / next_step,
+                        running_target_loss / next_step * K,
+                    ))
 
         global_epoch += 1
     return average_fully_ssim_loss
@@ -412,7 +416,8 @@ def main(args=None):
         parser.add_argument('--val_limit', type=int, required=False, default=0)
         parser.add_argument('--filelists_dir',
                             help='Specify filelists directory', type=str, default='filelists')
-
+        parser.add_argument('--K',
+                            help='Delay update', type=int, default=1)
         args = parser.parse_args()
 
     checkpoint_dir = args.checkpoint_dir
@@ -475,7 +480,7 @@ def main(args=None):
         device, model, disc, train_data_loader, test_data_loader, optimizer, disc_optimizer,
         checkpoint_dir=checkpoint_dir,
         checkpoint_interval=hparams.checkpoint_interval,
-        nepochs=hparams.nepochs)
+        nepochs=hparams.nepochs, K=args.K)
     return avg_fully_ssim_loss
 
 

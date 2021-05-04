@@ -29,7 +29,7 @@ def cosine_loss(a, v, y):
 
 
 def train(device, model, train_data_loader, test_data_loader, optimizer,
-          checkpoint_dir=None, checkpoint_interval=None, nepochs=None):
+          checkpoint_dir=None, checkpoint_interval=None, nepochs=None, K=1):
 
     global global_step, global_epoch
     # resumed_step = global_step
@@ -42,7 +42,6 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
                 continue
 
             model.train()
-            optimizer.zero_grad()
 
             # Transform data to CUDA device
             x = x.to(device)
@@ -52,9 +51,12 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             a, v = model(mel, x)
             y = y.to(device)
 
-            loss = cosine_loss(a, v, y)
+            loss = cosine_loss(a, v, y) / K
             loss.backward()
-            optimizer.step()
+
+            if global_step % K == 0:
+                optimizer.step()
+                optimizer.zero_grad()
 
             global_step += 1
             # cur_session_steps = global_step - resumed_step
@@ -69,8 +71,9 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
                     eval_model(test_data_loader, global_step,
                                device, model, checkpoint_dir)
 
-            prog_bar.set_description(
-                'Loss: {}'.format(running_loss / (step + 1)))
+            if global_step % K == 0:
+                prog_bar.set_description(
+                    'Loss: {}'.format(running_loss))
 
         global_epoch += 1
 
@@ -164,6 +167,8 @@ def main(args=None):
         parser.add_argument('--val_limit', type=int, required=False, default=0)
         parser.add_argument('--filelists_dir',
                             help='Specify filelists directory', type=str, default='filelists')
+        parser.add_argument('--K',
+                            help='Delay update', type=int, default=1)
 
         args = parser.parse_args()
 
@@ -210,7 +215,7 @@ def main(args=None):
     train(device, model, train_data_loader, val_data_loader, optimizer,
           checkpoint_dir=checkpoint_dir,
           checkpoint_interval=hparams.syncnet_checkpoint_interval,
-          nepochs=hparams.nepochs)
+          nepochs=hparams.nepochs, K=args.K)
 
 
 if __name__ == "__main__":
