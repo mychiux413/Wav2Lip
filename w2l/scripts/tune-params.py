@@ -10,7 +10,6 @@ from w2l.hparams import hparams
 
 
 def objective(trial):
-    reset_global()
     target_dir = '/hdd/checkpoints/w2l/experiments/exp-{}'.format(trial._trial_id)
     sampling_half_window_size_seconds = trial.suggest_float(
         'sampling_half_window_size_seconds', 1.0, 10.0, log=False)
@@ -61,6 +60,7 @@ def objective(trial):
     hparams.landmarks_wt = landmarks_wt
     hparams.merge_ref = merge_ref
     hparams.nepochs = 1
+    reset_global()
     loss = hq_train(args)
     return loss
 

@@ -147,6 +147,7 @@ __pycache__
 *.avi
 *.wav
 filelists/*.txt
+filelists/*/*.txt
 evaluation/test_filelists/lr*.txt
 *.pyc
 *.mkv

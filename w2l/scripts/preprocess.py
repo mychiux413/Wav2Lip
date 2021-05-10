@@ -196,7 +196,9 @@ def main():
     parser.add_argument(
         '--limit', help='Limit dump files', default=0, type=int)
     parser.add_argument(
-        '--exclude', help='exclude dir with comma separated', default=None, type=str)
+        '--excludes', help='exclude dirs with comma separated', default=None, type=str)
+    parser.add_argument(
+        '--includes', help='include dirs with comma separated', default=None, type=str)
 
     args = parser.parse_args()
 
@@ -211,13 +213,18 @@ def main():
 
     filelist = glob(os.path.join(args.data_root, '*/*.mp4'))
     exclude_dirs = tuple()
-    if args.exclude is not None:
-        excludes = args.exclude.split(',')
+    if args.excludes is not None:
+        excludes = args.excludes.split(',')
         exclude_dirs = tuple(set([os.path.join(args.data_root, ex) for ex in excludes]))
     if args.limit > 0:
         print("limit dump files to:", args.limit)
         np.random.seed(1234)
         filelist = np.random.choice(filelist, size=args.limit, replace=False)
+    if args.includes is not None:
+        includes = args.includes.split(',')
+        include_dirs = tuple(set([os.path.join(args.data_root, inc) for inc in includes]))
+        include_list = glob(os.path.join(include_dirs, '*/*.mp4'))
+        filelist = set(filelist + include_list)
 
     for f in tqdm(filelist, total=len(filelist), desc='dump video'):
         if f.startswith(exclude_dirs):

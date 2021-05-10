@@ -125,6 +125,25 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
     while global_epoch < nepochs:
         gc.collect()
         print('Starting Epoch: {}'.format(global_epoch))
+        if global_epoch < 10:
+            lr = (hparams.initial_learning_rate - hparams.min_learning_rate) / \
+                10.0 * global_epoch + hparams.min_learning_rate
+            disc_lr = (hparams.disc_initial_learning_rate - hparams.disc_min_learning_rate) / \
+                10.0 * global_epoch + hparams.disc_min_learning_rate
+        else:
+            lr = hparams.initial_learning_rate * \
+                (hparams.learning_rate_decay_rate ** (global_epoch - 10))
+            lr = max(hparams.min_learning_rate, lr)
+
+            disc_lr = hparams.initial_learning_rate * \
+                (hparams.learning_rate_decay_rate ** (global_epoch - 10))
+            disc_lr = max(hparams.min_learning_rate, disc_lr)
+        print("epoch: {}, lr: {}, disc_lr: {}".format(global_epoch, lr, disc_lr))
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
+        for param_group in disc_optimizer.param_groups:
+            param_group['lr'] = disc_lr
+
         running_sync_loss, running_rec_loss, running_perceptual_loss = 0., 0., 0.
         running_disc_real_loss, running_disc_fake_loss, running_target_loss = 0., 0., 0.
         running_landmarks_loss, running_l1_loss, running_ssim_loss = 0., 0., 0.
@@ -236,6 +255,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                     if average_sync_loss < .6:
                         print("set syncnet_wt as", 0.03)
                         hparams.set_hparam('syncnet_wt', 0.03)
+                        hparams.set_hparam('landmarks_wt', 0.05)
 
             next_step = step + 1
 
