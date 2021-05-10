@@ -12,29 +12,56 @@ import random
 import cv2
 from w2l.hparams import hparams
 import torchvision
+from multiprocessing import Pool
 
 augment = torchvision.transforms.Compose([
     torchvision.transforms.ColorJitter(brightness=(
         0.6, 1.4), contrast=(0.6, 1.4), saturation=(0.6, 1.4), hue=0),
-    torchvision.transforms.RandomHorizontalFlip(p=0.2),
 ])
+
+
+def sort_to_img_names(vidname):
+    imgs = sorted(glob(os.path.join(vidname, '*.jpg')),
+                  key=lambda name: int(os.path.basename(name).split('.')[0]))
+    return vidname, imgs
 
 
 def get_image_list(data_root, split, limit=0, filelists_dir='filelists'):
     filelist = []
     filelists_path = os.path.join(filelists_dir, "{}.txt".format(split))
+    assert os.path.exists(filelists_path)
 
     i = 0
     with open(filelists_path) as f:
         for line in f:
             line = line.split('#')[0]
             line = line.strip()
-            filelist.append(os.path.join(data_root, line))
+            dirpath = os.path.join(data_root, line)
+            filelist.append(dirpath)
             i += 1
             if limit > 0 and i > limit:
                 break
-
     return filelist
+
+
+class Mels(dict):
+    def __setitem__(self, key, value):
+        mel_path = join(key, 'mel.npy')
+        assert os.path.exists(mel_path)
+        self.__dict__[key] = mel_path
+
+    def __getitem__(self, key):
+        mel_path = self.__dict__[key]
+        return np.load(mel_path)
+
+
+class LandMarks(dict):
+    def __setitem__(self, key, value):
+        self.__dict__[key] = value
+
+    def __getitem__(self, key):
+        path = self.__dict__[key]
+        return np.load(path, allow_pickle=True).tolist()
 
 
 class Dataset(object):
@@ -47,61 +74,46 @@ class Dataset(object):
                  img_augment=True,
                  filelists_dir='filelists'):
         self.all_videos = list(filter(
-            lambda vidname: os.path.exists(join(vidname, "audio.wav")),
+            lambda vidname: os.path.exists(join(vidname, "audio.ogg")),
             get_image_list(data_root, split, limit=limit, filelists_dir=filelists_dir)))
-        self.img_names = {
-            vidname: sorted(
-                glob(join(vidname, '*.png')),
-                key=lambda name: int(os.path.basename(name).split('.')[0])) for vidname in self.all_videos
-        }
-        self.landmarks = None
+        assert len(self.all_videos) > 0, "no video dirs found from: {} with filelists_dir: {}".format(
+            data_root, filelists_dir,
+        )
+
+        self.img_names = {}
+        self.orig_mels = Mels()
+        with Pool() as p:
+            for vidname, imgs in p.imap_unordered(
+                    sort_to_img_names,
+                    tqdm(self.all_videos, desc="prepare image names"),
+                    chunksize=128):
+                self.img_names[vidname] = imgs
+            for vidname in p.imap_unordered(
+                    audio.load_and_dump_mel, tqdm(self.all_videos, desc="load mels"), chunksize=128):
+                self.orig_mels[vidname] = None
+        self.landmarks = LandMarks()
         if self.use_landmarks:
-            self.landmarks = {
-                vidname: np.load(join(vidname, "landmarks.npy"), allow_pickle=True).tolist() for vidname in self.all_videos
-            }
+            print("load landmarks")
+            for vidname in self.all_videos:
+                self.landmarks[vidname] = join(vidname, "landmarks.npy")
+        for vidname in self.landmarks.keys():
+            assert vidname in self.orig_mels, "vidname {} is in landmarks but not in orig_mels".format(vidname)
 
         self.img_size = hparams.img_size
         self.half_img_size = int(self.img_size / 2)
         self.x1_mask_edge = int(self.img_size * 0.25)
         self.x2_mask_edge = int(self.img_size * 0.75)
-
-        self.orig_mels = {}
-        for vidname in tqdm(self.all_videos, desc="load mels"):
-            mel_path = join(vidname, "mel.npy")
-            wavpath = join(vidname, "audio.wav")
-            assert os.path.exists(wavpath), wavpath
-            if os.path.exists(mel_path):
-                try:
-                    orig_mel = np.load(mel_path)
-                except Exception as err:
-                    print(err)
-                    wav = audio.load_wav(wavpath, hparams.sample_rate)
-                    orig_mel = audio.melspectrogram(wav).T
-                    np.save(mel_path, orig_mel)
-            else:
-                wav = audio.load_wav(wavpath, hparams.sample_rate)
-                orig_mel = audio.melspectrogram(wav).T
-                np.save(mel_path, orig_mel)
-            self.orig_mels[vidname] = orig_mel
         self.data_root = data_root
         self.inner_shuffle = inner_shuffle
-        self.all_videos_p = None
         self.linear_space = np.array(range(len(self.all_videos)))
-        if inner_shuffle:
-            imgs_counts = [len(self.img_names[vidname])
-                           for vidname in self.all_videos]
-            self.all_videos_p = np.array(imgs_counts) / np.sum(imgs_counts)
         self.sampling_half_window_size_seconds = sampling_half_window_size_seconds
         self.img_augment = img_augment
-        if not self.inner_shuffle:
-            self.data_len = len(self.all_videos)
-        else:
-            self.data_len = sum([len(names) for _, names in self.img_names.items()]) // hparams.syncnet_T
+        self.data_len = len(self.all_videos)
         print("data length: ", self.data_len)
 
     def get_vidname(self, idx):
         if self.inner_shuffle:
-            idx = np.random.choice(self.linear_space, p=self.all_videos_p)
+            idx = np.random.choice(self.linear_space)
         return self.all_videos[idx]
 
     def get_frame_id(self, frame):
@@ -113,7 +125,7 @@ class Dataset(object):
 
         window_fnames = []
         for frame_id in range(start_id, start_id + self.syncnet_T):
-            frame = join(vidname, '{}.png'.format(frame_id))
+            frame = join(vidname, '{}.jpg'.format(frame_id))
             if not isfile(frame):
                 return None
             window_fnames.append(frame)
@@ -271,7 +283,6 @@ class Wav2LipDataset(Dataset):
             window = self.prepare_window(window)  # 3 x T x H x W
             y = torch.FloatTensor(window)
             wrong_window = self.prepare_window(wrong_window)  # 3 x T x H x W
-            window, wrong_window, landmarks, masks = self.mask_mouth(window, wrong_window, vidname, window_fnames)
 
             cat = np.concatenate([window, wrong_window, y], axis=1)
             cat = torch.FloatTensor(cat)
@@ -284,10 +295,13 @@ class Wav2LipDataset(Dataset):
             wrong_window = cat[:, self.syncnet_T:(self.syncnet_T * 2), :, :]
             y = cat[:, (self.syncnet_T * 2):, :, :]
 
+            window, wrong_window, landmarks, masks = self.mask_mouth(
+                window, wrong_window, vidname, window_fnames)
+
             if hparams.merge_ref:
                 x = window + wrong_window
             else:
-                x = torch.cat([window, wrong_window], axis=0)            
+                x = torch.cat([window, wrong_window], axis=0)
 
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
             indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)

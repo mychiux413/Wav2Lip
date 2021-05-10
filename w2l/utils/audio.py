@@ -5,6 +5,7 @@ import numpy as np
 from scipy import signal
 from scipy.io import wavfile
 from w2l.hparams import hparams as hp
+import os
 
 
 def load_wav(path, sr):
@@ -155,3 +156,21 @@ def _denormalize(D):
         return (((D + hp.max_abs_value) * -hp.min_level_db / (2 * hp.max_abs_value)) + hp.min_level_db)
     else:
         return ((D * -hp.min_level_db / hp.max_abs_value) + hp.min_level_db)
+
+
+def load_and_dump_mel(vidname):
+    mel_path = os.path.join(vidname, "mel.npy")
+    wavpath = os.path.join(vidname, "audio.ogg")
+    if os.path.exists(mel_path):
+        try:
+            orig_mel = np.load(mel_path)
+        except Exception as err:
+            print(err)
+            wav = load_wav(wavpath, hp.sample_rate)
+            orig_mel = melspectrogram(wav).T
+            np.save(mel_path, orig_mel)
+    else:
+        wav = load_wav(wavpath, hp.sample_rate)
+        orig_mel = melspectrogram(wav).T
+        np.save(mel_path, orig_mel)
+    return vidname

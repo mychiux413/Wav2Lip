@@ -147,6 +147,7 @@ __pycache__
 *.avi
 *.wav
 filelists/*.txt
+filelists/*/*.txt
 evaluation/test_filelists/lr*.txt
 *.pyc
 *.mkv
@@ -159,6 +160,7 @@ avspeech/
 data/
 temp/
 datasets/
+datasets-new/
 generate/
 temp*
 checkpoints/

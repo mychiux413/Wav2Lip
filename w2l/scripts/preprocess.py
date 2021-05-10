@@ -27,8 +27,8 @@ def process_video_file(fa, vfile, args):
     dirname = vfile.split('/')[-2]
 
     fulldir = os.path.join(args.preprocessed_root, dirname, vidname)
-    wavpath = os.path.join(fulldir, 'audio.wav')
-    if os.path.exists(fulldir) and len(os.listdir(fulldir)) > 3 * hp.syncnet_T + 2 and os.path.exists(wavpath):
+    wavpath = os.path.join(fulldir, 'audio.ogg')
+    if os.path.exists(wavpath) and len(os.listdir(fulldir)) > 3 * hp.syncnet_T + 2:
         return
     os.makedirs(fulldir, exist_ok=True)
 
@@ -80,9 +80,11 @@ def process_video_file(fa, vfile, args):
                 x2 = int(np.round(x2 * resize_factor_width))
                 y1 = int(np.round(y1 * resize_factor_height))
                 y2 = int(np.round(y2 * resize_factor_height))
-                y2 = min(height, y2 + 20)  # add chin
-            cv2.imwrite(os.path.join(fulldir, '{}.png'.format(i)),
-                        images[j][y1:y2, x1:x2])
+            y2 = min(height, y2 + 20)  # add chin
+            cv2.imwrite(
+                os.path.join(fulldir, '{}.jpg'.format(i)),
+                images[j][y1:y2, x1:x2], [int(cv2.IMWRITE_JPEG_QUALITY), 100],
+            )
 
 
 def process_audio_file(vfile, args, template):
@@ -90,10 +92,11 @@ def process_audio_file(vfile, args, template):
     dirname = vfile.split('/')[-2]
 
     fulldir = os.path.join(args.preprocessed_root, dirname, vidname)
-    os.makedirs(fulldir, exist_ok=True)
+    if not os.path.exists(fulldir):
+        return
 
-    wavpath = os.path.join(fulldir, 'audio.wav')
-    if os.path.exists(wavpath):
+    wavpath = os.path.join(fulldir, 'audio.ogg')
+    if os.path.exists(wavpath) and os.stat(wavpath).st_size > 0:
         return
 
     command = template.format(vfile, wavpath)
@@ -104,15 +107,17 @@ def process_mouth_position(model, args, vfile):
     vidname = os.path.basename(vfile).split('.')[0]
     dirname = vfile.split('/')[-2]
     fulldir = os.path.join(args.preprocessed_root, dirname, vidname)
+    if not os.path.exists(fulldir):
+        return
     config_path = os.path.join(fulldir, "landmarks.npy")
-    if os.path.exists(config_path):
+    if os.path.exists(config_path) and os.stat(config_path).st_size > 0:
         return
     config = {}
 
     img_batch = []
     imgname_batch = []
     fnames = list(
-        filter(lambda name: name.endswith('.png'), os.listdir(fulldir)))
+        filter(lambda name: name.endswith('.jpg'), os.listdir(fulldir)))
     fnames_len = len(fnames)
     for i, fname in enumerate(fnames):
         path = os.path.join(fulldir, fname)
@@ -139,7 +144,7 @@ def process_mouth_position(model, args, vfile):
             config[imgname_batch[j]] = landmark
 
     np.save(config_path, config, allow_pickle=True)
-    assert len(config) == fnames_len, "dump len vs .png size: {} vs {}".format(
+    assert len(config) == fnames_len, "dump len vs .jpg size: {} vs {}".format(
         len(config), fnames_len,
     )
 
@@ -149,11 +154,13 @@ def process_blur_score(job):
     vidname = os.path.basename(vfile).split('.')[0]
     dirname = vfile.split('/')[-2]
     fulldir = os.path.join(args.preprocessed_root, dirname, vidname)
+    if not os.path.exists(fulldir):
+        return
     config_path = os.path.join(fulldir, "blur.npy")
-    if os.path.exists(config_path):
+    if os.path.exists(config_path) and os.stat(config_path).st_size > 0:
         return False
     config = {}
-    for fname in filter(lambda name: name.endswith('.png'), os.listdir(fulldir)):
+    for fname in filter(lambda name: name.endswith('.jpg'), os.listdir(fulldir)):
         path = os.path.join(fulldir, fname)
         img = cv2.imread(path)
         score = cal_blur(img)
@@ -186,6 +193,12 @@ def main():
                         help="Root folder of the preprocessed dataset", required=True)
     parser.add_argument(
         '--facenet_batch_size', help='Batch size of facenet', default=64, type=int)
+    parser.add_argument(
+        '--limit', help='Limit dump files', default=0, type=int)
+    parser.add_argument(
+        '--excludes', help='exclude dirs with comma separated', default=None, type=str)
+    parser.add_argument(
+        '--includes', help='include dirs with comma separated', default=None, type=str)
 
     args = parser.parse_args()
 
@@ -193,14 +206,29 @@ def main():
         face_detection.LandmarksType._2D, flip_input=False,
         device='cuda')
 
-    template = "ffmpeg -loglevel panic -y -i '{}' -strict -2 '{}'"
+    template = "ffmpeg -loglevel panic -y -i '{}' -strict -2 -vn -codec:a libvorbis '{}'"
 
     print('Started processing from {} to {}'.format(
         args.data_root, args.preprocessed_root))
 
     filelist = glob(os.path.join(args.data_root, '*/*.mp4'))
+    exclude_dirs = tuple()
+    if args.excludes is not None:
+        excludes = args.excludes.split(',')
+        exclude_dirs = tuple(set([os.path.join(args.data_root, ex) for ex in excludes]))
+    if args.limit > 0:
+        print("limit dump files to:", args.limit)
+        np.random.seed(1234)
+        filelist = np.random.choice(filelist, size=args.limit, replace=False)
+    if args.includes is not None:
+        includes = args.includes.split(',')
+        include_dirs = tuple(set([os.path.join(args.data_root, inc) for inc in includes]))
+        include_list = glob(os.path.join(include_dirs, '*/*.mp4'))
+        filelist = set(filelist + include_list)
 
     for f in tqdm(filelist, total=len(filelist), desc='dump video'):
+        if f.startswith(exclude_dirs):
+            continue
         try:
             process_video_file(fa, f, args)
         except KeyboardInterrupt:
@@ -210,6 +238,8 @@ def main():
             continue
 
     for vfile in tqdm(filelist, desc="dump audio"):
+        if vfile.startswith(exclude_dirs):
+            continue
         try:
             process_audio_file(vfile, args, template)
         except KeyboardInterrupt:
@@ -220,6 +250,8 @@ def main():
 
     facenet_model = load_facenet_model()
     for vfile in tqdm(filelist, desc="dump landmarks"):
+        if vfile.startswith(exclude_dirs):
+            continue
         try:
             with torch.no_grad():
                 process_mouth_position(facenet_model, args, vfile)
@@ -232,6 +264,8 @@ def main():
 
     def gen():
         for vfile in tqdm(filelist, desc="dump blur scores"):
+            if vfile.startswith(exclude_dirs):
+                continue
             yield args, vfile
 
     with Pool(hp.num_workers) as p:

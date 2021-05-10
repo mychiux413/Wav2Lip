@@ -3,7 +3,7 @@ import os
 import numpy as np
 from torch.utils import data as data_utils
 from w2l.models.syncnet import SyncNet_color as SyncNet
-from w2l.utils.data import Dataset
+from w2l.utils.data import Dataset, Mels, sort_to_img_names
 import random
 import torch
 from torch import nn
@@ -14,6 +14,7 @@ from glob import glob
 import cv2
 from functools import partial
 from PIL import Image
+from multiprocessing import Pool
 
 
 class SyncnetDataset(Dataset):
@@ -23,9 +24,9 @@ class SyncnetDataset(Dataset):
             dirpath = os.path.join(data_root, dirname)
             if not os.path.isdir(dirpath):
                 continue
-            for vid_dirname in os.listdir(dirpath):
+            for vid_dirname in tqdm(os.listdir(dirpath), desc="[{}] collect video dirs".format(dirpath)):
                 video_path = os.path.join(dirpath, vid_dirname)
-                wavpath = os.path.join(video_path, "audio.wav")
+                wavpath = os.path.join(video_path, "audio.ogg")
                 if len(os.listdir(video_path)) < 3 * hp.syncnet_T + 2:
                     print("insufficient files of dir:", vid_dirname)
                     continue
@@ -34,29 +35,17 @@ class SyncnetDataset(Dataset):
                     continue
                 self.all_videos.append(video_path)
 
-        self.img_names = {
-            vidname: sorted(
-                glob(os.path.join(vidname, '*.png')),
-                key=lambda name: int(os.path.basename(name).split('.')[0])) for vidname in self.all_videos
-        }
-
-        self.orig_mels = {}
-        for vidname in tqdm(self.all_videos, desc="load mels"):
-            mel_path = os.path.join(vidname, "mel.npy")
-            wavpath = os.path.join(vidname, "audio.wav")
-            if os.path.exists(mel_path):
-                try:
-                    orig_mel = np.load(mel_path)
-                except Exception as err:
-                    print(err)
-                    wav = audio.load_wav(wavpath, hp.sample_rate)
-                    orig_mel = audio.melspectrogram(wav).T
-                    np.save(mel_path, orig_mel)
-            else:
-                wav = audio.load_wav(wavpath, hp.sample_rate)
-                orig_mel = audio.melspectrogram(wav).T
-                np.save(mel_path, orig_mel)
-            self.orig_mels[vidname] = orig_mel
+        self.img_names = {}
+        self.orig_mels = Mels()
+        with Pool() as p:
+            for vidname, imgs in p.imap_unordered(
+                    sort_to_img_names,
+                    tqdm(self.all_videos, desc="prepare image names"),
+                    chunksize=128):
+                self.img_names[vidname] = imgs
+            for vidname in p.imap_unordered(
+                    audio.load_and_dump_mel, tqdm(self.all_videos, desc="load mels"), chunksize=128):
+                self.orig_mels[vidname] = None
         self.data_root = data_root
         self.inner_shuffle = False
         self.sampling_half_window_size_seconds = 1e10
@@ -64,6 +53,8 @@ class SyncnetDataset(Dataset):
         # 實驗發現, 只要是wrong image, model的分辨能力都很好, 因此不需要sampling wrong image
         self.only_true_image = only_true_image
         self.img_size = img_size
+        self.data_len = len(self.all_videos)
+        print("data length: ", self.data_len)
 
     def __getitem__(self, idx):
         while 1:
@@ -116,7 +107,7 @@ class SyncnetDataset(Dataset):
                 continue
 
             orig_mel = self.orig_mels[vidname]
-            mel = self.crop_audio_window(orig_mel.copy(), img_name)
+            mel = self.crop_audio_window(orig_mel, img_name)
 
             if (mel.shape[0] != self.syncnet_mel_step_size):
                 idx += 1
@@ -130,7 +121,6 @@ class SyncnetDataset(Dataset):
 
             x = torch.FloatTensor(x)
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
-
             return x, mel, y, os.path.relpath(vidname, self.data_root)
 
 
@@ -168,6 +158,8 @@ def evaluate_datasets_losses(syncnet_checkpoint_path, img_size, data_root, epoch
     hp.set_hparam('img_size', img_size)
     device = 'cuda:0'
     sync_model = SyncNet().to(device)
+
+    print("load syncnet checkpoint:" + syncnet_checkpoint_path)
     checkpoint = torch.load(syncnet_checkpoint_path)
     sync_model.load_state_dict(checkpoint["state_dict"])
     test_dataset = SyncnetDataset(
@@ -207,17 +199,35 @@ def get_min_img_size(path):
     return min(width, height)
 
 
-def to_sorted_stats_landmarks(tup, delta=True):
-    path, dic = tup
+def to_sorted_stats_landmarks(path, dic):
     values = []
-    for k, v in sorted(dic.items(), key=lambda item: int(item[0].split('.')[0])):
+    for _, v in sorted(dic.items(), key=lambda item: int(item[0].split('.')[0])):
         values.append(v)
-    rows = np.array(values)
-    if delta:
-        rows = np.diff(rows, axis=0)
+    rows = np.array(values, dtype=np.float32)
+    delta_rows = np.diff(rows, axis=0)
     mean = np.mean(rows, axis=0)
     std = np.std(rows, axis=0)
-    return path, np.stack([mean, std], axis=-1)
+    delta_mean = np.mean(delta_rows, axis=0)
+    delta_std = np.std(delta_rows, axis=0)
+    return path, np.stack([mean, std, delta_mean, delta_std], axis=-1)
+
+
+def stats_landmarks(path):
+    dirname = os.path.dirname(path)
+    dic = np.load(path, allow_pickle=True).tolist()
+    if len(dic) == 0:
+        return None, None
+    for k, v in dic.items():
+        dic[k] = v[51:, 0:1]  # take lip of x only
+    return to_sorted_stats_landmarks(dirname, dic)
+
+
+def stats_blurs(path):
+    values = np.load(path, allow_pickle=True).tolist()
+    if len(values) == 0:
+        return None, None, None
+    arr = np.array(list(values.values()), dtype=np.float32)
+    return os.path.dirname(path), np.mean(arr), np.std(arr)
 
 
 def main():
@@ -281,28 +291,30 @@ def main():
         for vidname, (mean_loss, std_loss) in stat_losses.items():
             if mean_loss < cosine_loss_mean_max and std_loss < cosine_loss_std_max:
                 valid_vidnames.add(vidname)
+        print("got valid vidnames:", len(valid_vidnames))
+        del stat_losses
 
     if args.filter_outbound_lip:
         land_paths = glob(os.path.join(args.data_root, "**/**/landmarks.npy"))
-        path_landmarks = list(filter(lambda item: len(item[1]) > 0, [
-            (os.path.dirname(path), np.load(path, allow_pickle=True).tolist()) for path in land_paths]))
-        stats_diff = {k: v for k, v in map(
-            to_sorted_stats_landmarks, path_landmarks)}
-        # {'dirpath': Array(68, [x, y], [mean, std])}
+        with Pool() as p:
+            # {'dirpath': Array(17, [x], [mean, std, delta_mean, delta_std])}
+            stats = {k: v for k, v in filter(
+                lambda item: item[0] is not None,
+                p.imap_unordered(stats_landmarks, tqdm(land_paths, desc="path_landmarks"), chunksize=128))}
 
-        stats = {k: v for k, v in map(
-            partial(to_sorted_stats_landmarks, delta=False), path_landmarks)}
-        mid_lip_stats_diff = np.array(list(stats_diff.values()))[:, 52, :, :]
-        mid_lip_stats = np.array(list(stats.values()))[:, 52, :, :]
+            #  mid_lip_stats: [vid_size, 17, 1, 4]
+            mid_lip_stats = np.array(list(stats.values()))
+            print("mid_lip_stats", mid_lip_stats.shape)
         max_mean_x_diff = np.quantile(
-            mid_lip_stats_diff[:, 0, 0], q=args.lip_mean_cut_q)
+            mid_lip_stats[:, 0, 0, 2], q=args.lip_mean_cut_q)
         max_std_x_diff = np.quantile(
-            mid_lip_stats_diff[:, 0, 1], q=args.lip_mean_cut_q)
-        min_mean_x = np.quantile(mid_lip_stats[:, 0, 0], q=(
+            mid_lip_stats[:, 0, 0, 3], q=args.lip_mean_cut_q)
+        min_mean_x = np.quantile(mid_lip_stats[:, 0, 0, 0], q=(
             1.0 - args.lip_mean_cut_q) / 2.0)
         max_mean_x = np.quantile(
-            mid_lip_stats[:, 0, 0], q=1.0 - (1.0 - args.lip_mean_cut_q) / 2.0)
-        max_std_x = np.quantile(mid_lip_stats[:, 0, 1], q=args.lip_mean_cut_q)
+            mid_lip_stats[:, 0, 0, 0], q=1.0 - (1.0 - args.lip_mean_cut_q) / 2.0)
+        max_std_x = np.quantile(
+            mid_lip_stats[:, 0, 0, 1], q=args.lip_mean_cut_q)
         print("filter_outbound_lip parameter:")
         print(
             "max_mean_x_diff:", max_mean_x_diff,
@@ -315,16 +327,15 @@ def main():
         blur_paths = glob(os.path.join(args.data_root, "**/**/blur.npy"))
         blurs_mean = {}
         blurs_std = {}
-        for path in blur_paths:
-            values = np.load(path, allow_pickle=True).tolist()
-            if len(values) == 0:
-                continue
-            blurs_mean[os.path.dirname(path)] = values
-        for dirpath, values in blurs_mean.items():
-            lst = list(values.values())
-            blurs_mean[dirpath] = np.mean(lst)
-            blurs_std[dirpath] = np.std(lst)
-        max_std_blur = np.quantile(list(blurs_std.values()), q=args.blur_score_q_cut)
+        with Pool() as p:
+            for dirpath, mean, std in p.imap_unordered(
+                    stats_blurs, tqdm(blur_paths, desc="load blurs"), chunksize=128):
+                if dirpath is None:
+                    continue
+                blurs_mean[dirpath] = mean
+                blurs_std[dirpath] = std
+        max_std_blur = np.quantile(
+            list(blurs_std.values()), q=args.blur_score_q_cut)
     i_train = 0
     i_val = 0
     train_lines = []
@@ -342,17 +353,17 @@ def main():
         for dataname in tqdm(os.listdir(dirpath), desc="[{}] draw and filter".format(dirname)):
             dataname_path = os.path.join(dirpath, dataname)
             if args.filter_outbound_lip:
-                if dataname_path not in stats_diff:
+                if dataname_path not in stats:
                     continue
-                if stats_diff[dataname_path][52, 0, 0] > max_mean_x_diff:
+                if stats[dataname_path][0, 0, 2] > max_mean_x_diff:
                     continue
-                if stats_diff[dataname_path][52, 0, 1] > max_std_x_diff:
+                if stats[dataname_path][0, 0, 3] > max_std_x_diff:
                     continue
-                if stats[dataname_path][52, 0, 0] < min_mean_x:
+                if stats[dataname_path][0, 0, 0] < min_mean_x:
                     continue
-                if stats[dataname_path][52, 0, 0] > max_mean_x:
+                if stats[dataname_path][0, 0, 0] > max_mean_x:
                     continue
-                if stats[dataname_path][52, 0, 1] > max_std_x:
+                if stats[dataname_path][0, 0, 1] > max_std_x:
                     continue
                 if args.min_mean_blur_score > 0 and blurs_mean[dataname_path] < args.min_mean_blur_score:
                     continue
@@ -365,11 +376,12 @@ def main():
             if args.min_img_size > 0:
                 paths = []
                 for fname in os.listdir(dataname_path):
-                    if not fname.endswith('.png'):
+                    if not fname.endswith('.jpg'):
                         continue
                     path = os.path.join(dataname_path, fname)
                     paths.append(path)
-                samples = np.random.choice(paths, min(len(paths), 64), replace=False)
+                samples = np.random.choice(
+                    paths, min(len(paths), 64), replace=False)
                 sizes = list(map(get_min_img_size, samples))
                 min_size = min(sizes)
                 if min_size < args.min_img_size:

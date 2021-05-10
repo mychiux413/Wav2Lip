@@ -82,6 +82,8 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
                    batch_size=128, num_mels=80, mel_step_size=16, sample_rate=16000,
                    output_fps=None, output_crf=0, start_seconds=0.0):
 
+    face_filter = np.load('face-filter.npy')
+    anti_face_filter = np.load('face-anti-filter.npy')
     assert os.path.exists(face_config_path)
     with open(face_config_path, 'r') as f:
         firstline = next(f)
@@ -120,9 +122,14 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
             y1, y2, x1, x2 = c
             face_width = x2 - x1
             face_height = y2 - y1
+            half_face_height = face_height // 2
+            p = p[hparams.img_size // 2:]
             if face_width > 0 and face_height > 0:
-                p = cv2.resize(p.astype(np.uint8), (face_width, face_height))
-                f[y1:y2, x1:x2] = p
+                p = cv2.resize(p, (face_width, half_face_height))
+                f_of_p = f[(y2-half_face_height):y2, x1:x2].astype(np.float32)
+                face_filter = np.expand_dims(cv2.resize(face_filter.copy(), (face_width, half_face_height)), -1)
+                anti_face_filter = np.expand_dims(cv2.resize(anti_face_filter.copy(), (face_width, half_face_height)), -1)
+                f[(y2-half_face_height):y2, x1:x2] = (face_filter * p + anti_face_filter * f_of_p).astype(np.uint8)
             out.write(f)
 
     out.release()

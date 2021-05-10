@@ -29,12 +29,21 @@ def cosine_loss(a, v, y):
 
 
 def train(device, model, train_data_loader, test_data_loader, optimizer,
-          checkpoint_dir=None, checkpoint_interval=None, nepochs=None):
+          checkpoint_dir=None, checkpoint_interval=None, nepochs=None, K=1):
 
     global global_step, global_epoch
     # resumed_step = global_step
 
     while global_epoch < nepochs:
+        if global_epoch < 20:
+            lr = (hparams.syncnet_lr - hparams.syncnet_min_lr) / 20.0 * global_epoch + hparams.syncnet_min_lr
+        else:
+            lr = hparams.syncnet_lr * (hparams.syncnet_lr_decay_rate ** (global_epoch - 20))
+            lr = max(hparams.syncnet_min_lr, lr)
+        print("epoch: {}, lr: {}".format(global_epoch, lr))
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
+
         running_loss = 0.
         prog_bar = tqdm(enumerate(train_data_loader))
         for step, (x, mel, y) in prog_bar:
@@ -42,7 +51,6 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
                 continue
 
             model.train()
-            optimizer.zero_grad()
 
             # Transform data to CUDA device
             x = x.to(device)
@@ -52,9 +60,12 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             a, v = model(mel, x)
             y = y.to(device)
 
-            loss = cosine_loss(a, v, y)
+            loss = cosine_loss(a, v, y) / K
             loss.backward()
-            optimizer.step()
+
+            if global_step % K == 0:
+                optimizer.step()
+                optimizer.zero_grad()
 
             global_step += 1
             # cur_session_steps = global_step - resumed_step
@@ -69,8 +80,10 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
                     eval_model(test_data_loader, global_step,
                                device, model, checkpoint_dir)
 
-            prog_bar.set_description(
-                'Loss: {}'.format(running_loss / (step + 1)))
+            if global_step % K == 0:
+                next_step = step + 1
+                prog_bar.set_description(
+                    'Loss: {}'.format(running_loss * K / next_step))
 
         global_epoch += 1
 
@@ -143,6 +156,9 @@ def load_checkpoint(path, model, optimizer, reset_optimizer=False):
             optimizer.load_state_dict(checkpoint["optimizer"])
     global_step = checkpoint["global_step"]
     global_epoch = checkpoint["global_epoch"]
+    if reset_optimizer:
+        global_step = 0
+        global_epoch = 0
 
     return model
 
@@ -160,10 +176,14 @@ def main(args=None):
                             help='Save checkpoints to this directory', required=True, type=str)
         parser.add_argument('--checkpoint_path',
                             help='Resumed from this checkpoint', default=None, type=str)
+        parser.add_argument('--reset_optimizer',
+                            help='Reset optimizer or not', action='store_true')
         parser.add_argument('--train_limit', type=int, required=False, default=0)
         parser.add_argument('--val_limit', type=int, required=False, default=0)
         parser.add_argument('--filelists_dir',
                             help='Specify filelists directory', type=str, default='filelists')
+        parser.add_argument('--K',
+                            help='Delay update', type=int, default=1)
 
         args = parser.parse_args()
 
@@ -188,7 +208,7 @@ def main(args=None):
 
     val_data_loader = data_utils.DataLoader(
         val_dataset, batch_size=hparams.syncnet_batch_size,
-        num_workers=8)
+        num_workers=max(1, hparams.num_workers // 2))
 
     # Model
     model = SyncNet().to(device)
@@ -204,13 +224,13 @@ def main(args=None):
 
     if checkpoint_path is not None:
         load_checkpoint(checkpoint_path, model,
-                        optimizer, reset_optimizer=False)
+                        optimizer, reset_optimizer=args.reset_optimizer)
 
     model = nn.DataParallel(model)
     train(device, model, train_data_loader, val_data_loader, optimizer,
           checkpoint_dir=checkpoint_dir,
           checkpoint_interval=hparams.syncnet_checkpoint_interval,
-          nepochs=hparams.nepochs)
+          nepochs=hparams.nepochs, K=args.K)
 
 
 if __name__ == "__main__":
