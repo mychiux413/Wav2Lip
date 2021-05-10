@@ -8,6 +8,7 @@ import numpy as np
 from w2l.models.conv import Conv2dTranspose, Conv2d, nonorm_Conv2d, evaluate_conv_layers, evaluate_new_size_after_conv, create_audio_encoder
 from w2l.models.conv import evaluate_new_size_after_transpose_conv
 from w2l.models.mobilefacenet import Linear_block, BatchNorm1d, Flatten, Linear
+from w2l.utils.env import device
 
 
 class GDC(nn.Module):
@@ -192,7 +193,6 @@ class Wav2Lip(nn.Module):
                                           nn.Conv2d(32, 3, kernel_size=1,
                                                     stride=1, padding=0),
                                           nn.Sigmoid())
-        self.landmarks_decoder = GDC(face_final_channels*2, len(hp.landmarks_points)*2)
 
     def forward(self, audio_sequences, face_sequences):
         # face_sequences: (B, 6, T, H, W)
@@ -215,10 +215,6 @@ class Wav2Lip(nn.Module):
             x = f(x)
             feats.append(x)
 
-        cat_embedding = torch.cat(
-            (feats[-1], audio_embedding), dim=1)  # (BxT, 1024, 1, 1)
-        landmarks = self.landmarks_decoder(cat_embedding)
-
         x = audio_embedding
         for f in self.face_decoder_blocks:
             x = f(x)
@@ -238,7 +234,7 @@ class Wav2Lip(nn.Module):
         else:
             outputs = x
 
-        return outputs, landmarks  # (BxT, 3, img_size, img_size), (BxT, landmarks_points*2)
+        return outputs  # (BxT, 3, img_size, img_size)
 
 
 class Wav2Lip_disc_qual(nn.Module):

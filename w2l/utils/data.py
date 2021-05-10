@@ -305,9 +305,8 @@ class Wav2LipDataset(Dataset):
 
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
             indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)
-            landmarks = torch.FloatTensor(landmarks)
             masks = torch.FloatTensor(masks)
-            return x, indiv_mels, mel, y, landmarks, masks
+            return x, indiv_mels, mel, y, masks
 
 
 class SyncnetDataset(Dataset):
@@ -345,7 +344,7 @@ class SyncnetDataset(Dataset):
                     all_read = False
                     break
                 try:
-                    img = cv2.resize(img, (self.img_size, self.img_size))
+                    img = cv2.resize(img, (96, 96))[48:]
                 except Exception as e:
                     all_read = False
                     break
@@ -362,8 +361,6 @@ class SyncnetDataset(Dataset):
                 continue
 
             x = self.prepare_window(window)  # 3 x T x H x W
-            # _, x, landmarks, __ = self.mask_mouth(None, x, vidname, window_fnames)
-            x = x[:, :, x.shape[2]//2:]
             x = np.transpose(x, (1, 0, 2, 3))
             x = torch.FloatTensor(x)  # T x 3 x H x W
             if self.img_augment:
