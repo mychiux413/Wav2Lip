@@ -8,7 +8,6 @@ import numpy as np
 from w2l.models.conv import Conv2dTranspose, Conv2d, nonorm_Conv2d, evaluate_conv_layers, evaluate_new_size_after_conv, create_audio_encoder
 from w2l.models.conv import evaluate_new_size_after_transpose_conv
 from w2l.models.mobilefacenet import Linear_block, BatchNorm1d, Flatten, Linear
-from w2l.utils.env import device
 
 
 class GDC(nn.Module):
