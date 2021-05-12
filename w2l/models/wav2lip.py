@@ -176,6 +176,13 @@ class Wav2Lip(nn.Module):
                     nn.Sequential(Conv2dTranspose(input_channels, required_output_channels[i], kernel_size=3, stride=1, padding=0),  # 3,3
                                   Conv2d(required_output_channels[i], required_output_channels[i], kernel_size=3, stride=1, padding=1, residual=True),)
                 )
+            elif i == n_layers - 1:
+                sequentials.append(
+                    nn.Sequential(Conv2dTranspose(input_channels, required_output_channels[i], kernel_size=3, stride=(1,2), padding=1, output_padding=(0,1)),
+                                  Conv2d(
+                                      required_output_channels[i], required_output_channels[i], kernel_size=3, stride=1, padding=1, residual=True),
+                                  Conv2d(required_output_channels[i], required_output_channels[i], kernel_size=3, stride=1, padding=1, residual=True),)
+                )
             else:
                 sequentials.append(
                     nn.Sequential(Conv2dTranspose(input_channels, required_output_channels[i], kernel_size=3, stride=2, padding=1, output_padding=1),
@@ -218,10 +225,12 @@ class Wav2Lip(nn.Module):
         for f in self.face_decoder_blocks:
             x = f(x)
             try:
-                x = torch.cat((x, feats.pop()), dim=1)
+                feat = feats.pop()
+                if len(feats) == 0:
+                    feat = feat[:, :, hp.img_size // 2:]
+                x = torch.cat((x, feat), dim=1)
             except Exception as e:
-                print(x.size())
-                print(feats[-1].size())
+                print("x", x.size(), "feat", feat.size())
                 raise e
 
         x = self.output_block(x)

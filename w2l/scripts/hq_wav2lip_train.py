@@ -148,6 +148,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             # Train generator now. Remove ALL grads.
 
             g = model(indiv_mels, x)
+            g_zeros = torch.zeros_like(g)
+            g = torch.cat((g_zeros, g), dim=3)
 
             if hparams.syncnet_wt > 0.:
                 sync_loss = get_sync_loss(mel, g)
@@ -281,6 +283,8 @@ def eval_model(test_data_loader, global_step, device, model, disc):
             pred, torch.ones((len(pred), 1)).to(device))
 
         g = model(indiv_mels, x)
+        g_zeros = torch.zeros_like(g)
+        g = torch.cat((g_zeros, g), dim=3)
 
         pred = disc(g)
         disc_fake_loss = F.binary_cross_entropy(
