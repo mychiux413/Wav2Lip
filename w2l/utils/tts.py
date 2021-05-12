@@ -183,7 +183,7 @@ def list_languages():
 
 def to_audio(client, text, lang, rate=1.0, voice="en-US-Wavenet-D"):
     # Set the text input to be synthesized
-    synthesis_input = texttospeech.SynthesisInput(text=text)
+    synthesis_input = texttospeech.SynthesisInput(ssml=text)
 
     # Build the voice request, select the language code ("en-US") and the ssml
     # voice gender ("neutral")
@@ -239,9 +239,20 @@ def script_to_audio(client, src, lang='en-US', rate=0.9, voice="en-US-Wavenet-D"
     elif getattr(src, 'read', None) is not None:
         thefile = src
     raw = thefile.read().strip('---').strip()
+
+    is_ssml = raw.startswith('<speak>') and raw.endswith('</speak>')
+
     texts = limit_texts(raw.split('---'))
     audios = []
-    for text in texts:
+    len_texts = len(texts)
+    for i, text in enumerate(texts):
+        if is_ssml and len_texts > 1:
+            if i == 0:
+                text += "</speak>"
+            elif i == len_texts - 1:
+                text = "<speak>" + text
+            else:
+                text = "<speak>" + text + "</speak>"
         a, seconds = to_audio(client, text, lang, rate=rate, voice=voice)
         audios.append(a)
         silent = pydub.AudioSegment.silent(duration=500)
