@@ -325,7 +325,9 @@ class SyncnetDataset(Dataset):
             while wrong_img_name == img_name:
                 wrong_img_name = random.choice(img_names)
 
-            if random.choice([True, False]):
+            # The false data may not really dismatch the lip, but the true data should must match
+            is_true = np.random.choice([True, False], replace=False, p=[0.75, 0.25])
+            if is_true:
                 y = torch.ones(1).float()
                 chosen = img_name
             else:

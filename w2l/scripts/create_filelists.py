@@ -163,7 +163,7 @@ def evaluate_datasets_losses(syncnet_checkpoint_path, img_size, data_root, epoch
     checkpoint = torch.load(syncnet_checkpoint_path)
     sync_model.load_state_dict(checkpoint["state_dict"])
     test_dataset = SyncnetDataset(
-        data_root, only_true_image=True, img_size=hp.img_size)
+        data_root, only_true_image=True, img_size=96)
     data_loader = data_utils.DataLoader(
         test_dataset, batch_size=hp.syncnet_batch_size,
         num_workers=hp.num_workers,
