@@ -346,8 +346,8 @@ class Wav2Lip_disc_qual(nn.Module):
             nn.Conv2d(final_channels, 1, kernel_size=1, stride=1, padding=0), nn.Sigmoid())
         self.label_noise = .0
 
-    def get_lower_half(self, face_sequences):
-        return face_sequences[:, :, face_sequences.size(2)//2:]
+    # def get_lower_half(self, face_sequences):
+    #     return face_sequences[:, :, face_sequences.size(2)//2:]
 
     def to_2d(self, face_sequences):
         # B = face_sequences.size(0)
@@ -355,11 +355,8 @@ class Wav2Lip_disc_qual(nn.Module):
                                    for i in range(face_sequences.size(2))], dim=0)
         return face_sequences
 
-    def perceptual_forward(self, false_face_sequences):
-        false_face_sequences = self.to_2d(false_face_sequences)
-        false_face_sequences = self.get_lower_half(false_face_sequences)
-
-        false_feats = false_face_sequences
+    def perceptual_forward(self, false_half_face_sequences):
+        false_feats = self.to_2d(false_half_face_sequences)
         for f in self.face_encoder_blocks:
             false_feats = f(false_feats)
 
@@ -368,11 +365,8 @@ class Wav2Lip_disc_qual(nn.Module):
 
         return false_pred_loss
 
-    def forward(self, face_sequences):
-        face_sequences = self.to_2d(face_sequences)
-        face_sequences = self.get_lower_half(face_sequences)
-
-        x = face_sequences
+    def forward(self, false_half_face_sequences):
+        x = self.to_2d(false_half_face_sequences)
         for f in self.face_encoder_blocks:
             x = f(x)
 

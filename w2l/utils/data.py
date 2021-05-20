@@ -14,9 +14,15 @@ from w2l.hparams import hparams
 import torchvision
 from multiprocessing import Pool
 
-augment = torchvision.transforms.Compose([
+augment_for_wav2lip = torchvision.transforms.Compose([
     torchvision.transforms.ColorJitter(brightness=(
         0.6, 1.4), contrast=(0.6, 1.4), saturation=(0.6, 1.4), hue=0),
+])
+
+augment_for_syncnet = torchvision.transforms.Compose([
+    torchvision.transforms.ColorJitter(brightness=(
+        0.6, 1.4), contrast=(0.6, 1.4), saturation=(0.6, 1.4), hue=0),
+    torchvision.transforms.RandomHorizontalFlip(p=0.5),
 ])
 
 
@@ -178,7 +184,7 @@ class Dataset(object):
 
     def augment_window(self, tensor):
         # input size: T x 3 x H x W
-        return augment(tensor)
+        return augment_for_wav2lip(tensor)
 
     def prepare_window(self, window):
         # output size: 3 x T x H x W
@@ -312,6 +318,10 @@ class Wav2LipDataset(Dataset):
 class SyncnetDataset(Dataset):
     use_landmarks = False
 
+    def augment_window(self, tensor):
+        # input size: T x 3 x H x W
+        return augment_for_syncnet(tensor)
+
     def __getitem__(self, idx):
         while 1:
             vidname = self.get_vidname(idx)
@@ -326,7 +336,7 @@ class SyncnetDataset(Dataset):
                 wrong_img_name = random.choice(img_names)
 
             # The false data may not really dismatch the lip, but the true data should must match
-            is_true = np.random.choice([True, False], replace=False, p=[0.75, 0.25])
+            is_true = np.random.choice([True, False], replace=False, p=[0.8, 0.2])
             if is_true:
                 y = torch.ones(1).float()
                 chosen = img_name
