@@ -113,17 +113,16 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
         mel_batch = mel_batch.permute((0, 3, 1, 2)).to(device)
 
         with torch.no_grad():
-            pred, _ = model(mel_batch, img_batch)
+            half_pred = model(mel_batch, img_batch)
 
-        pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
+        half_pred = half_pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
 
-        for p, f, c in zip(pred, frames, coords):
+        for p, f, c in zip(half_pred, frames, coords):
             f = f.cpu().numpy().astype(np.uint8)
             y1, y2, x1, x2 = c
             face_width = x2 - x1
             face_height = y2 - y1
             half_face_height = face_height // 2
-            p = p[hparams.img_size // 2:]
             if face_width > 0 and face_height > 0:
                 p = cv2.resize(p, (face_width, half_face_height))
                 f_of_p = f[(y2-half_face_height):y2, x1:x2].astype(np.float32)

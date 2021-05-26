@@ -1,3 +1,4 @@
+import glob
 from os.path import join
 from tqdm import tqdm
 import torch
@@ -41,6 +42,18 @@ def reset_global():
     torch.cuda.manual_seed(SEED)
 
 
+def debug_dump(tensor, to_path='temp/temp.png'):
+    imgs = (tensor.detach().cpu().numpy().transpose(
+        0, 2, 3, 4, 1) * 255.).astype(np.uint8)
+    dirname = os.path.dirname(to_path)
+    basename = os.path.basename(to_path)
+    lname, ext = os.path.splitext(basename)
+    for batch_idx, c in enumerate(imgs):
+        for t in range(len(c)):
+            cv2.imwrite('{}/{}-{}_{}.{}'.format(dirname,
+                        lname, batch_idx, t, ext), c[t])
+
+
 def save_sample_images(x, g, gt, global_step, checkpoint_dir):
     # g_landmarks: (B, T, landmarks_points_len, 2)
     x = (x.detach().cpu().numpy().transpose(
@@ -50,12 +63,7 @@ def save_sample_images(x, g, gt, global_step, checkpoint_dir):
     gt = (gt.detach().cpu().numpy().transpose(
         0, 2, 3, 4, 1) * 255.).astype(np.uint8)
     # gt: (B, T, H, W, 3)
-
-    if hparams.merge_ref:
-        refs = np.zeros_like(x, dtype=np.uint8)
-        inps = x
-    else:
-        refs, inps = x[..., 3:], x[..., :3]
+    refs, inps = x[..., 3:], x[..., :3]
 
     folder = join(checkpoint_dir, "samples_step{:09d}".format(global_step))
     if not os.path.exists(folder):
@@ -93,7 +101,8 @@ resize_for_sync = torchvision.transforms.Resize((48, 96))
 
 def get_sync_loss(mel, half_g):
     # g: B x 3 x T x H x W, g should be masked
-    half_g = torch.cat([half_g[:, :, i] for i in range(hparams.syncnet_T)], dim=1)
+    half_g = torch.cat([half_g[:, :, i]
+                       for i in range(hparams.syncnet_T)], dim=1)
     half_g = resize_for_sync(half_g)
     # B, 3 * T, H//2, W
     a, v = syncnet(mel, half_g)
@@ -107,21 +116,32 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
     # resumed_step = global_step
 
     original_disc_wt = hparams.disc_wt
+    half_img_size = hparams.img_size // 2
+    expand_y_start = half_img_size - max(10, 168 - half_img_size)
+
+    if hparams.warm_up_epochs > 0:
+        C = np.log(hparams.initial_learning_rate /
+                   hparams.min_learning_rate) / hparams.warm_up_epochs
+        C_disc = np.log(hparams.disc_initial_learning_rate /
+                        hparams.disc_min_learning_rate) / hparams.warm_up_epochs
+
+    print("WarmUp Epochs:", hparams.warm_up_epochs)
     while global_epoch < nepochs:
         gc.collect()
         print('Starting Epoch: {}'.format(global_epoch))
         if global_epoch < hparams.warm_up_epochs:
-            lr = (hparams.initial_learning_rate - hparams.min_learning_rate) / \
-                hparams.warm_up_epochs * global_epoch + hparams.min_learning_rate
-            disc_lr = (hparams.disc_initial_learning_rate - hparams.disc_min_learning_rate) / \
-                hparams.warm_up_epochs * global_epoch + hparams.disc_min_learning_rate
+            lr = hparams.min_learning_rate * np.exp(C * global_epoch)
+            disc_lr = hparams.disc_min_learning_rate * \
+                np.exp(C_disc * global_epoch)
         else:
             lr = hparams.initial_learning_rate * \
-                (hparams.learning_rate_decay_rate ** (global_epoch - hparams.warm_up_epochs))
+                (hparams.learning_rate_decay_rate **
+                 (global_epoch - hparams.warm_up_epochs))
             lr = max(hparams.min_learning_rate, lr)
 
             disc_lr = hparams.disc_initial_learning_rate * \
-                (hparams.disc_learning_rate_decay_rate ** (global_epoch - hparams.warm_up_epochs))
+                (hparams.disc_learning_rate_decay_rate **
+                 (global_epoch - hparams.warm_up_epochs))
             disc_lr = max(hparams.disc_min_learning_rate, disc_lr)
         print("epoch: {}, lr: {}, disc_lr: {}".format(global_epoch, lr, disc_lr))
         for param_group in optimizer.param_groups:
@@ -131,7 +151,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
         running_sync_loss, running_rec_loss, running_perceptual_loss = 0., 0., 0.
         running_disc_real_loss, running_disc_fake_loss, running_target_loss = 0., 0., 0.
-        running_l1_loss, running_ssim_loss, running_disk_loss = 0., 0., 0.
+        running_l1_loss, running_ssim_loss, running_disc_loss = 0., 0., 0.
+
         prog_bar = tqdm(enumerate(train_data_loader))
         for step, (x, indiv_mels, mel, gt, masks) in prog_bar:
             B = x.size(0)
@@ -144,40 +165,47 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             mel = mel.to(device)
             indiv_mels = indiv_mels.to(device)
             gt = gt.to(device)
-            masks = masks.to(device)
+            # masks = masks.to(device)
             half_gt = gt[:, :, :, hparams.img_size // 2:]
             # Train generator now. Remove ALL grads.
 
             half_g = model(indiv_mels, x)
-            g_zeros = torch.zeros_like(half_g)
-            g = torch.cat((g_zeros, half_g), dim=3)
 
             if hparams.syncnet_wt > 0.:
                 sync_loss = get_sync_loss(mel, half_g)
             else:
                 sync_loss = 0.
 
-            if hparams.disc_wt > 0.:
-                perceptual_loss = disc.perceptual_forward(half_g)
-            else:
-                perceptual_loss = 0.
+            perceptual_loss = disc.perceptual_forward(half_g)
 
-            masks_for_g = masks.permute((0, 2, 1, 3, 4))
-            masked_g = masks_for_g * g
-            masked_gt = masks_for_g * gt
+            # masks_for_g = masks.permute((0, 2, 1, 3, 4))
+            ssim_gt = gt[:, :, :, expand_y_start:]
+            ssim_g = torch.cat(
+                (gt[:, :, :, expand_y_start:half_img_size], half_g), dim=3)
+
+            # debug_dump(ssim_gt, 'temp/ssim_gt.png')
+            # debug_dump(ssim_g, 'temp/ssim_g.png')
+            # refs, inps = x[:, 3:], x[:, :3]
+            # debug_dump(refs, 'temp/refs.png')
+            # debug_dump(inps, 'temp/inps.png')
+
+            # masked_g = masks_for_g * g
+            # masked_gt = masks_for_g * gt
 
             l1 = l1loss(half_g, half_gt)
-            ssim = ms_ssim_loss(masked_g, masked_gt)
+
+            ssim = ms_ssim_loss(ssim_g, ssim_gt)
             rec_loss = hparams.l1_wt * \
                 l1 + hparams.ssim_wt * ssim
 
-            loss = hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss + \
-                (1. - hparams.syncnet_wt - hparams.disc_wt) * \
-                rec_loss
+            loss = (hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss +
+                    (1. - hparams.syncnet_wt - hparams.disc_wt) * rec_loss)
             loss /= K
             loss.backward()
 
             if global_step % K == 0:
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), 1.0, norm_type=2.0)
                 optimizer.step()
                 optimizer.zero_grad()
 
@@ -193,14 +221,18 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             disc_loss.backward()
 
             if global_step % K == 0:
+                torch.nn.utils.clip_grad_norm_(
+                    disc.parameters(), 1.0, norm_type=2.0)
                 disc_optimizer.step()
                 disc_optimizer.zero_grad()
 
             running_disc_real_loss += disc_real_loss.item()
             running_disc_fake_loss += disc_fake_loss.item()
-            running_disk_loss += disc_loss.item()
+            running_disc_loss += disc_loss.item()
 
             if global_step % checkpoint_interval == 0:
+                g_zeros = torch.zeros_like(half_g)
+                g = torch.cat((g_zeros, half_g), dim=3)
                 save_sample_images(x, g, gt, global_step,
                                    checkpoint_dir)
 
@@ -212,15 +244,9 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             running_rec_loss += rec_loss.item()
             running_l1_loss += l1.item()
             running_ssim_loss += ssim.item()
-            if hparams.syncnet_wt > 0.:
-                running_sync_loss += sync_loss.item()
-            else:
-                running_sync_loss += 0.
+            running_sync_loss += sync_loss.item()
 
-            if hparams.disc_wt > 0.:
-                running_perceptual_loss += perceptual_loss.item()
-            else:
-                running_perceptual_loss += 0.
+            running_perceptual_loss += perceptual_loss.item()
 
             if global_step == 1 or global_step % checkpoint_interval == 0:
                 save_checkpoint(
@@ -236,15 +262,16 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                     if average_sync_loss < .6:
                         print("set syncnet_wt as", 0.03)
                         hparams.set_hparam('syncnet_wt', 0.03)
-                        hparams.set_hparam('landmarks_wt', 0.05)
 
             next_step = step + 1
 
             if global_step % K == 0:
-                if running_disk_loss / next_step * K < 5.0:
-                    hparams.set_hparam('disc_wt', original_disc_wt)
-                else:
-                    print("discriminator is broken, set weight to 0.")
+                if running_disc_loss / next_step * K < 2.0:
+                    if hparams.disc_wt != original_disc_wt:
+                        print("discriminator is trustable now, set it back to:", original_disc_wt)
+                        hparams.set_hparam('disc_wt', original_disc_wt)
+                elif running_l1_loss / next_step > 0.03:
+                    print("discriminator is not trustable, set weight to 0.")
                     hparams.set_hparam('disc_wt', 0.)
 
                 prog_bar.set_description(
@@ -269,6 +296,8 @@ def eval_model(test_data_loader, global_step, device, model, disc):
         running_disc_fake_loss, running_perceptual_loss, running_target_loss, \
         running_l1_loss, running_ssim_loss = [], [], [], [], [], [], [], []
 
+    half_img_size = hparams.img_size // 2
+    expand_y_start = half_img_size - max(10, 168 - half_img_size)
     for step, (x, indiv_mels, mel, gt, masks) in enumerate((test_data_loader)):
         B = x.size(0)
         if B == 1:
@@ -280,7 +309,7 @@ def eval_model(test_data_loader, global_step, device, model, disc):
         mel = mel.to(device)
         indiv_mels = indiv_mels.to(device)
         gt = gt.to(device)
-        masks = masks.to(device)
+        # masks = masks.to(device)
         half_gt = gt[:, :, :, hparams.img_size // 2:]
 
         pred = disc(half_gt)
@@ -288,8 +317,8 @@ def eval_model(test_data_loader, global_step, device, model, disc):
             pred, torch.ones((len(pred), 1)).to(device))
 
         half_g = model(indiv_mels, x)
-        g_zeros = torch.zeros_like(half_g)
-        g = torch.cat((g_zeros, half_g), dim=3)
+        # g_zeros = torch.zeros_like(half_g)
+        # g = torch.cat((g_zeros, half_g), dim=3)
 
         pred = disc(half_g)
         disc_fake_loss = F.binary_cross_entropy(
@@ -305,12 +334,16 @@ def eval_model(test_data_loader, global_step, device, model, disc):
         else:
             perceptual_loss = 0.
 
-        masks_for_g = masks.permute((0, 2, 1, 3, 4))
-        masked_g = masks_for_g * g
-        masked_gt = masks_for_g * gt
+        # masks_for_g = masks.permute((0, 2, 1, 3, 4))
+        # masked_g = masks_for_g * g
+        # masked_gt = masks_for_g * gt
+
+        ssim_gt = gt[:, :, :, expand_y_start:]
+        ssim_g = torch.cat(
+            (gt[:, :, :, expand_y_start:half_img_size], half_g), dim=3)
 
         l1 = l1loss(half_g, half_gt)
-        ssim = ms_ssim_loss(masked_g, masked_gt)
+        ssim = ms_ssim_loss(ssim_gt, ssim_g)
         rec_loss = hparams.l1_wt * \
             l1 + hparams.ssim_wt * ssim
 
@@ -413,6 +446,10 @@ def main(args=None):
                             help='Specify filelists directory', type=str, default='filelists')
         parser.add_argument('--K',
                             help='Delay update', type=int, default=1)
+        parser.add_argument('--reset_optimizer',
+                            help='Reset optimizer or not', action='store_true')
+        parser.add_argument('--reset_disc_optimizer',
+                            help='Reset disc optimizer or not', action='store_true')
         args = parser.parse_args()
 
     checkpoint_dir = args.checkpoint_dir
@@ -445,6 +482,10 @@ def main(args=None):
           for p in model.parameters() if p.requires_grad)))
     print('total DISC trainable params {}'.format(sum(p.numel()
           for p in disc.parameters() if p.requires_grad)))
+    if args.reset_optimizer:
+        print("reset optimizer")
+    if args.reset_disc_optimizer:
+        print("reset disc optimizer")
 
     optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad],
                            lr=hparams.initial_learning_rate, betas=(
@@ -457,11 +498,13 @@ def main(args=None):
 
     if args.checkpoint_path is not None:
         load_checkpoint(args.checkpoint_path, model,
-                        optimizer, reset_optimizer=False)
+                        optimizer, reset_optimizer=args.reset_optimizer,
+                        overwrite_global_states=not args.reset_optimizer)
 
     if args.disc_checkpoint_path is not None:
         load_checkpoint(args.disc_checkpoint_path, disc, disc_optimizer,
-                        reset_optimizer=False, overwrite_global_states=False)
+                        reset_optimizer=args.reset_disc_optimizer,
+                        overwrite_global_states=not args.reset_disc_optimizer)
 
     load_checkpoint(args.syncnet_checkpoint_path, syncnet, None, reset_optimizer=True,
                     overwrite_global_states=False)

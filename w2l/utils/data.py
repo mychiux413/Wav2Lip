@@ -1,4 +1,5 @@
 from os.path import dirname, join, basename, isfile
+from w2l.models import syncnet
 from tqdm import tqdm
 from w2l.utils import audio
 
@@ -115,6 +116,8 @@ class Dataset(object):
         self.sampling_half_window_size_seconds = sampling_half_window_size_seconds
         self.img_augment = img_augment
         self.data_len = len(self.all_videos)
+        self.vacuum_width = hparams.syncnet_T
+        self.valid_sampling_width = self.vacuum_width + hparams.fps
         print("data length: ", self.data_len)
 
     def get_vidname(self, idx):
@@ -240,10 +243,20 @@ class Dataset(object):
         img_idx = random.choice(range(imgs_len))
         img_name = img_names[img_idx]
 
-        min_wrong_idx = max(
-            0, int(img_idx - hparams.fps * self.sampling_half_window_size_seconds))
-        max_wrong_idx = min(
-            imgs_len, int(img_idx + hparams.fps * self.sampling_half_window_size_seconds))
+        goleft = random.choice([True, False])
+        if img_idx < self.valid_sampling_width:
+            goleft = False
+        if img_idx > imgs_len - self.valid_sampling_width:
+            goleft = True
+
+        if goleft:
+            min_wrong_idx = max(
+                0, int(img_idx - hparams.fps * self.sampling_half_window_size_seconds))
+            max_wrong_idx = int(img_idx - self.vacuum_width)
+        else:
+            min_wrong_idx = int(img_idx + self.vacuum_width)
+            max_wrong_idx = min(
+                imgs_len, int(img_idx + hparams.fps * self.sampling_half_window_size_seconds))
         img_wrong_idx = random.choice(range(min_wrong_idx, max_wrong_idx))
         wrong_img_name = img_names[img_wrong_idx]
         return img_name, wrong_img_name
@@ -301,13 +314,10 @@ class Wav2LipDataset(Dataset):
             wrong_window = cat[:, self.syncnet_T:(self.syncnet_T * 2), :, :]
             y = cat[:, (self.syncnet_T * 2):, :, :]
 
-            window, wrong_window, landmarks, masks = self.mask_mouth(
+            window, wrong_window, _, masks = self.mask_mouth(
                 window, wrong_window, vidname, window_fnames)
 
-            if hparams.merge_ref:
-                x = window + wrong_window
-            else:
-                x = torch.cat([window, wrong_window], axis=0)
+            x = torch.cat([window, wrong_window], axis=0)
 
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
             indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)
@@ -336,7 +346,7 @@ class SyncnetDataset(Dataset):
                 wrong_img_name = random.choice(img_names)
 
             # The false data may not really dismatch the lip, but the true data should must match
-            is_true = np.random.choice([True, False], replace=False, p=[0.8, 0.2])
+            is_true = np.random.choice([True, False], replace=False, p=[0.6, 0.4])
             if is_true:
                 y = torch.ones(1).float()
                 chosen = img_name

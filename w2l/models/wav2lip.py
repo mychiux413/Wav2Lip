@@ -37,7 +37,7 @@ class Wav2Lip(nn.Module):
 
         last_face_x_size = hp.img_size
         last_face_y_size = hp.img_size
-        FIRST_CHANNELS = 3 if hp.merge_ref else 6
+        FIRST_CHANNELS = 6
         face_encoder_channels = [FIRST_CHANNELS]
 
         print("n_layers", n_layers)
@@ -355,19 +355,21 @@ class Wav2Lip_disc_qual(nn.Module):
                                    for i in range(face_sequences.size(2))], dim=0)
         return face_sequences
 
-    def perceptual_forward(self, false_half_face_sequences):
-        false_feats = self.to_2d(false_half_face_sequences)
+    def forward_(self, half_face_sequences):
+        x = self.to_2d(half_face_sequences)
         for f in self.face_encoder_blocks:
-            false_feats = f(false_feats)
+            x = f(x)
+        return x
+
+    def perceptual_forward(self, false_half_face_sequences):
+        false_feats = self.forward_(false_half_face_sequences)
 
         false_pred_loss = F.binary_cross_entropy(self.binary_pred(false_feats).view(len(false_feats), -1),
                                                  torch.ones((len(false_feats), 1)).cuda())
 
         return false_pred_loss
 
-    def forward(self, false_half_face_sequences):
-        x = self.to_2d(false_half_face_sequences)
-        for f in self.face_encoder_blocks:
-            x = f(x)
+    def forward(self, half_face_sequences):
+        x = self.forward_(half_face_sequences)
 
         return self.binary_pred(x).view(len(x), -1)

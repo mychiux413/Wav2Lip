@@ -102,9 +102,9 @@ hparams = HParams(
     fps=30,
 
     batch_size=4,
-    initial_learning_rate=0.005,
+    initial_learning_rate=0.001,
     learning_rate_decay_rate=0.9,
-    min_learning_rate=1e-7,
+    min_learning_rate=1e-6,
     opt_amsgrad=True,
     opt_weight_decay=0.0,
     # ctrl + c, stop whenever eval loss is consistently greater than train loss for ~10 epochs
@@ -115,7 +115,7 @@ hparams = HParams(
     save_optimizer_state=True,
     warm_up_epochs=5,
 
-    sampling_half_window_size_seconds=3.0,
+    sampling_half_window_size_seconds=2.0,
     img_augment=True,
 
     # mobilefacenet
@@ -137,17 +137,16 @@ hparams = HParams(
     syncnet_opt_weight_decay=0.0,
 
     disc_wt=0.07,
-    disc_initial_learning_rate=1e-4,
+    disc_initial_learning_rate=5e-5,
     disc_learning_rate_decay_rate=0.9,
-    disc_min_learning_rate=1e-8,
+    disc_min_learning_rate=1e-6,
     disc_opt_amsgrad=True,
     disc_opt_weight_decay=0.0,
 
     l1_wt=0.5,
     ssim_wt=0.5,
-    landmarks_wt=0.01,
+    landmarks_wt=0.0,
     landmarks_points=[2, 5, 8, 11, 14, 31, 33, 35, 48, 51, 54, 57, 62, 66],
-    merge_ref=False,
 )
 
 
