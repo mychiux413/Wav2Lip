@@ -48,13 +48,13 @@ def to_mels(audio_path, fps, num_mels=80, mel_step_size=16, sample_rate=16000):
     mel_chunks = []
     mel_idx_multiplier = num_mels / fps
     i = 0
-    while 1:
+
+    max_start_idx = len(mel[0]) - mel_step_size
+    for i in range(max_start_idx + 1):
         start_idx = int(i * mel_idx_multiplier)
-        if start_idx + mel_step_size > len(mel[0]):
-            mel_chunks.append(mel[:, len(mel[0]) - mel_step_size:])
-            break
-        mel_chunks.append(mel[:, start_idx: start_idx + mel_step_size])
-        i += 1
+        end_idx = start_idx + mel_step_size
+        chunk = mel[:, start_idx:end_idx]
+        mel_chunks.append(chunk)
     return mel_chunks
 
 
@@ -95,14 +95,14 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
         output_fps = face_fps
 
     start_frame = int(np.round(start_seconds * face_fps))
-    mels = to_mels(
+    mel_chunks = to_mels(
         audio_path, face_fps,
         num_mels=num_mels, mel_step_size=mel_step_size, sample_rate=sample_rate)
-    gen = datagen(face_config_path, mels, batch_size=batch_size, start_frame=start_frame)
+    gen = datagen(face_config_path, mel_chunks, batch_size=batch_size, start_frame=start_frame)
     model = load_model(model_path)
     print("Model loaded")
     model.eval()
-    for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, total=len(mels) // batch_size)):
+    for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, total=len(mel_chunks) // batch_size)):
         if i == 0:
             frame_h, frame_w = frames[0].shape[:-1]
             out = cv2.VideoWriter(

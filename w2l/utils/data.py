@@ -52,6 +52,19 @@ def get_image_list(data_root, split, limit=0, filelists_dir='filelists'):
 
 
 class Mels(dict):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def __len__(self):
+        return len(self.__dict__)
+
+    def __str__(self):
+        return str(self.__dict__)
+
+    def __repr__(self):
+        return repr(self.__dict__)
+
     def __setitem__(self, key, value):
         mel_path = join(key, 'mel.npy')
         assert os.path.exists(mel_path)
@@ -116,6 +129,8 @@ class Dataset(object):
         self.sampling_half_window_size_seconds = sampling_half_window_size_seconds
         self.img_augment = img_augment
         self.data_len = len(self.all_videos)
+        if self.data_len < 10000:
+            self.data_len = min(20000, int(sum([len(self.img_names[v]) for v in self.all_videos]) / self.syncnet_T))
         self.vacuum_width = hparams.syncnet_T
         self.valid_sampling_width = self.vacuum_width + hparams.fps
         print("data length: ", self.data_len)
@@ -126,6 +141,7 @@ class Dataset(object):
         return self.all_videos[idx]
 
     def get_frame_id(self, frame):
+        # 0.jpg is the first image
         return int(basename(frame).split('.')[0])
 
     def get_window(self, start_frame):
@@ -366,7 +382,7 @@ class SyncnetDataset(Dataset):
                     all_read = False
                     break
                 try:
-                    img = cv2.resize(img, (96, 96))[48:]
+                    img = cv2.resize(img, (self.img_size, self.img_size))[self.half_img_size:]
                 except Exception as e:
                     all_read = False
                     break

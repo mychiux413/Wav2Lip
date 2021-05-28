@@ -14,6 +14,7 @@ import argparse
 from w2l.hparams import hparams
 from w2l.utils.data import SyncnetDataset
 from w2l.utils.env import use_cuda, device
+import numpy as np
 
 global_step = 0
 global_epoch = 0
@@ -34,11 +35,15 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
     global global_step, global_epoch
     # resumed_step = global_step
 
+    if hparams.warm_up_epochs > 0:
+        C = np.log(hparams.syncnet_lr /
+                   hparams.syncnet_min_lr) / hparams.warm_up_epochs
+
     while global_epoch < nepochs:
-        if global_epoch < 20:
-            lr = (hparams.syncnet_lr - hparams.syncnet_min_lr) / 20.0 * global_epoch + hparams.syncnet_min_lr
+        if global_epoch < hparams.warm_up_epochs:
+            lr = hparams.syncnet_min_lr * np.exp(C * global_epoch)
         else:
-            lr = hparams.syncnet_lr * (hparams.syncnet_lr_decay_rate ** (global_epoch - 20))
+            lr = hparams.syncnet_lr * (hparams.syncnet_lr_decay_rate ** (global_epoch - hparams.warm_up_epochs))
             lr = max(hparams.syncnet_min_lr, lr)
         print("epoch: {}, lr: {}".format(global_epoch, lr))
         for param_group in optimizer.param_groups:

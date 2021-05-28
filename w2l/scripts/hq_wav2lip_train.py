@@ -96,14 +96,14 @@ def get_landmarks_loss(g_landmarks, gt_landmarks):
     return loss_sum_T / hparams.syncnet_T
 
 
-resize_for_sync = torchvision.transforms.Resize((48, 96))
+# resize_for_sync = torchvision.transforms.Resize((48, 96))
 
 
 def get_sync_loss(mel, half_g):
     # g: B x 3 x T x H x W, g should be masked
     half_g = torch.cat([half_g[:, :, i]
                        for i in range(hparams.syncnet_T)], dim=1)
-    half_g = resize_for_sync(half_g)
+    # half_g = resize_for_sync(half_g)
     # B, 3 * T, H//2, W
     a, v = syncnet(mel, half_g)
     y = torch.ones(half_g.size(0), 1).float().to(device)
@@ -171,10 +171,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
             half_g = model(indiv_mels, x)
 
-            if hparams.syncnet_wt > 0.:
-                sync_loss = get_sync_loss(mel, half_g)
-            else:
-                sync_loss = 0.
+            sync_loss = get_sync_loss(mel, half_g)
 
             perceptual_loss = disc.perceptual_forward(half_g)
 
