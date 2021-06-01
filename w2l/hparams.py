@@ -42,17 +42,26 @@ class HParams:
         # *************************
 
     def to_json(self, path):
+        print("dump hparams to: {}".format(path))
         with open(path, 'w') as f:
-            json.dump(self.data, f)
+            json.dump(self.data, f, indent=4, ensure_ascii=False)
 
     @classmethod
     def from_json(cls, path):
+        print("load hparams from: {}".format(path))
         assert os.path.exists(path)
         with open(path, 'r') as f:
             data = json.load(f)
             obj = cls()
             obj.data = data
             return obj
+
+    def overwrite_by_json(self, path):
+        print("overwrite hparams from: {}".format(path))
+        assert os.path.exists(path)
+        with open(path, 'r') as f:
+            data = json.load(f)
+        self.data = data
 
 
 # Default hyperparameters

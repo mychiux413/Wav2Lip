@@ -211,12 +211,14 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
             pred = disc(half_gt)
             disc_batch_size = pred.size(0)
-            y_real = torch.ones((disc_batch_size, 1), dtype=torch.float32, device=device)
+            y_real = torch.ones((disc_batch_size, 1),
+                                dtype=torch.float32, device=device)
             disc_real_loss = F.binary_cross_entropy(
                 pred, y_real)
 
             pred = disc(half_g.detach())
-            y_fake = torch.zeros((disc_batch_size, 1), dtype=torch.float32, device=device)
+            y_fake = torch.zeros((disc_batch_size, 1),
+                                 dtype=torch.float32, device=device)
             disc_fake_loss = F.binary_cross_entropy(
                 pred, y_fake)
 
@@ -269,7 +271,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             if global_step % K == 0:
                 if running_disc_loss.item() / next_step * K < 2.0:
                     if hparams.disc_wt != original_disc_wt:
-                        print("discriminator is trustable now, set it back to:", original_disc_wt)
+                        print(
+                            "discriminator is trustable now, set it back to:", original_disc_wt)
                         hparams.set_hparam('disc_wt', original_disc_wt)
                 elif running_l1_loss.item() / next_step > 0.03:
                     print("discriminator is not trustable, set weight to 0.")
@@ -296,13 +299,18 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                     ))
                 if summary_writer is not None:
                     summary_writer.add_scalar("Train/L1", _l1, global_step)
-                    summary_writer.add_scalar("Train/MS-SSIM", _ssim, global_step)
+                    summary_writer.add_scalar(
+                        "Train/MS-SSIM", _ssim, global_step)
                     summary_writer.add_scalar("Train/Rec", _rec, global_step)
                     summary_writer.add_scalar("Train/Sync", _sync, global_step)
-                    summary_writer.add_scalar("Train/Percep", _perc, global_step)
-                    summary_writer.add_scalar("Train/Fake", _disc_fake, global_step)
-                    summary_writer.add_scalar("Train/Real", _disc_real, global_step)
-                    summary_writer.add_scalar("Train/Target", _target, global_step)
+                    summary_writer.add_scalar(
+                        "Train/Percep", _perc, global_step)
+                    summary_writer.add_scalar(
+                        "Train/Fake", _disc_fake, global_step)
+                    summary_writer.add_scalar(
+                        "Train/Real", _disc_real, global_step)
+                    summary_writer.add_scalar(
+                        "Train/Target", _target, global_step)
 
         global_epoch += 1
 
@@ -332,7 +340,8 @@ def eval_model(test_data_loader, global_step, device, model, disc, summary_write
 
         pred = disc(half_gt)
         disc_batch_size = pred.size(0)
-        y_real = torch.ones((disc_batch_size, 1), dtype=torch.float32, device=device)
+        y_real = torch.ones((disc_batch_size, 1),
+                            dtype=torch.float32, device=device)
         disc_real_loss = F.binary_cross_entropy(
             pred, y_real)
 
@@ -341,7 +350,8 @@ def eval_model(test_data_loader, global_step, device, model, disc, summary_write
         # g = torch.cat((g_zeros, half_g), dim=3)
 
         pred = disc(half_g)
-        y_fake = torch.zeros((disc_batch_size, 1), dtype=torch.float32, device=device)
+        y_fake = torch.zeros((disc_batch_size, 1),
+                             dtype=torch.float32, device=device)
         disc_fake_loss = F.binary_cross_entropy(
             pred, y_fake)
 
@@ -480,14 +490,25 @@ def main(args=None):
                             help='Reset optimizer or not', action='store_true')
         parser.add_argument('--reset_disc_optimizer',
                             help='Reset disc optimizer or not', action='store_true')
+        parser.add_argument('--hparams',
+                            help='specify hparams file, default is None, this overwrite is after the env overwrite',
+                            type=str, default=None)
         args = parser.parse_args()
 
     checkpoint_dir = args.checkpoint_dir
 
     now = datetime.now()
-    log_dir = os.path.join(checkpoint_dir, "log-wav2lip-{}".format(now.strftime("%Y-%m-%d-%H_%M")))
+    log_dir = os.path.join(
+        checkpoint_dir, "log-wav2lip-{}".format(now.strftime("%Y-%m-%d-%H_%M")))
     print("log at: {}".format(log_dir))
     summary_writer = SummaryWriter(log_dir)
+
+    if args.hparams is None:
+        hparams_dump_path = os.path.join(
+            checkpoint_dir, "hparams-wav2lip-{}.json".format(now.strftime("%Y-%m-%d-%H_%M")))
+        hparams.to_json(hparams_dump_path)
+    else:
+        hparams.overwrite_by_json(args.hparams)
 
     # Dataset and Dataloader setup
     train_dataset = Wav2LipDataset('train', args.data_root,

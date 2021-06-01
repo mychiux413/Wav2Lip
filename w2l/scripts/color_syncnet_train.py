@@ -257,6 +257,9 @@ def main(args=None):
         parser.add_argument('--val_limit', type=int, required=False, default=0)
         parser.add_argument('--filelists_dir',
                             help='Specify filelists directory', type=str, default='filelists')
+        parser.add_argument('--hparams',
+                            help='specify hparams file, default is None, this overwrite is after the env overwrite',
+                            type=str, default=None)
         parser.add_argument('--K',
                             help='Delay update', type=int, default=1)
 
@@ -269,9 +272,17 @@ def main(args=None):
         os.mkdir(checkpoint_dir)
 
     now = datetime.now()
-    log_dir = os.path.join(checkpoint_dir, "log-syncnet-{}".format(now.strftime("%Y-%m-%d-%H_%M")))
+    log_dir = os.path.join(
+        checkpoint_dir, "log-syncnet-{}".format(now.strftime("%Y-%m-%d-%H_%M")))
     print("log at: {}".format(log_dir))
     summary_writer = SummaryWriter(log_dir)
+
+    if args.hparams is None:
+        dump_hparams_path = os.path.join(
+            checkpoint_dir, "hparams-syncnet-{}.json".format(now.strftime("%Y-%m-%d-%H_%M")))
+        hparams.to_json(dump_hparams_path)
+    else:
+        hparams.overwrite_by_json(args.hparams)
 
     # Dataset and Dataloader setup
     train_dataset = SyncnetDataset('train', args.data_root, limit=args.train_limit,
