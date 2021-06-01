@@ -78,12 +78,36 @@ def datagen(config_path, mels, batch_size=128, start_frame=0):
         yield img_batch, mel_batch, frame_batch, coords_batch
 
 
+def create_ellipse_filter():
+    img_size = 640
+
+    width = img_size
+    height = img_size // 2
+
+    a = (width // 2) - 90
+    b = (height // 2) - 50
+
+    filt = np.ones([height, width, 1], dtype=np.float32)
+    anti_filt = np.zeros([height, width, 1], dtype=np.float32)
+
+    for ix in range(width):
+        for iy in range(height):
+            x = ix - width // 2
+            y = iy - height // 2
+            delta = (np.sqrt(((x ** 2) / (a ** 2)) + ((y ** 2) / (b ** 2))) - 1.) * 2.0
+            if delta < 0.:
+                continue
+            v = min(delta, 1.0)
+            filt[iy, ix] = 1.0 - v
+            anti_filt[iy, ix] = v
+    return filt, anti_filt
+
+
 def generate_video(face_config_path, audio_path, model_path, output_path, face_fps=25,
                    batch_size=128, num_mels=80, mel_step_size=16, sample_rate=16000,
                    output_fps=None, output_crf=0, start_seconds=0.0):
 
-    face_filter = np.load('face-filter.npy')
-    anti_face_filter = np.load('face-anti-filter.npy')
+    face_filter, anti_face_filter = create_ellipse_filter()
     assert os.path.exists(face_config_path)
     with open(face_config_path, 'r') as f:
         firstline = next(f)

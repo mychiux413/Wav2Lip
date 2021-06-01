@@ -144,6 +144,9 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                  (global_epoch - hparams.warm_up_epochs))
             disc_lr = max(hparams.disc_min_learning_rate, disc_lr)
         print("epoch: {}, lr: {}, disc_lr: {}".format(global_epoch, lr, disc_lr))
+        if summary_writer is not None:
+            summary_writer.add_scalar("Train/Wav2Lip-LR", lr, global_step)
+            summary_writer.add_scalar("Train/Disc-LR", disc_lr, global_step)
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
         for param_group in disc_optimizer.param_groups:
