@@ -146,9 +146,9 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
                 i_image += 1
                 if rect is not None:
                     y1 = max(0, rect[1])
-                    y2 = min(width, rect[3])
+                    y2 = min(height, rect[3])
                     x1 = max(0, rect[0])
-                    x2 = min(height, rect[2])
+                    x2 = min(width, rect[2])
 
                     if should_resize:
                         x1 = int(np.round(x1 / resize_ratio))
@@ -156,9 +156,9 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
                         y1 = int(np.round(y1 / resize_ratio))
                         y2 = int(np.round(y2 / resize_ratio))
                     y1 = max(0, y1 - pady1)
-                    y2 = min(width, y2 + pady2)
+                    y2 = min(height, y2 + pady2)
                     x1 = max(0, x1 - padx1)
-                    x2 = min(height, x2 + padx2)
+                    x2 = min(width, x2 + padx2)
 
                     # **** mouth *****
                     mouth_landmarks = landmarks[49:]

@@ -49,7 +49,7 @@ def to_mels(audio_path, fps, num_mels=80, mel_step_size=16, sample_rate=16000):
     mel_idx_multiplier = num_mels / fps
     i = 0
 
-    max_start_idx = len(mel[0]) - mel_step_size
+    max_start_idx = int((len(mel[0]) - mel_step_size) / mel_idx_multiplier)
     for i in range(max_start_idx + 1):
         start_idx = int(i * mel_idx_multiplier)
         end_idx = start_idx + mel_step_size
