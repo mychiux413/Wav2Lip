@@ -6,6 +6,7 @@ from w2l.models.conv import Conv2d, evaluate_conv_layers, evaluate_new_size_afte
 from w2l.hparams import hparams as hp
 import numpy as np
 
+
 class SyncNet_color(nn.Module):
     def __init__(self):
         super(SyncNet_color, self).__init__()
@@ -71,6 +72,5 @@ class SyncNet_color(nn.Module):
 
         audio_embedding = F.normalize(audio_embedding, p=2, dim=1)
         face_embedding = F.normalize(face_embedding, p=2, dim=1)
-
 
         return audio_embedding, face_embedding

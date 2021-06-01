@@ -1,6 +1,9 @@
 from glob import glob
 import os
 import json
+from distutils.util import strtobool
+
+from numpy.lib.arraysetops import isin
 
 
 class HParams:
@@ -31,7 +34,10 @@ class HParams:
                 if isinstance(value, tp):
                     print("overwrite HParams from environ var: {}={}".format(
                         env_key, value_from_env))
-                    self.data[key] = tp(value_from_env)
+                    if isinstance(value, bool):
+                        self.data[key] = strtobool(value_from_env)
+                    else:
+                        self.data[key] = tp(value_from_env)
                     break
         # *************************
 
@@ -102,19 +108,20 @@ hparams = HParams(
     fps=30,
 
     batch_size=4,
-    initial_learning_rate=0.005,
-    learning_rate_decay_rate=0.995,
-    min_learning_rate=1e-7,
+    initial_learning_rate=0.001,
+    learning_rate_decay_rate=0.9,
+    min_learning_rate=1e-6,
     opt_amsgrad=True,
     opt_weight_decay=0.0,
     # ctrl + c, stop whenever eval loss is consistently greater than train loss for ~10 epochs
     nepochs=200000000000000000,
-    num_workers=4,
+    num_workers=2,
     checkpoint_interval=20000,
     eval_interval=20000,
     save_optimizer_state=True,
+    warm_up_epochs=5,
 
-    sampling_half_window_size_seconds=3.0,
+    sampling_half_window_size_seconds=2.0,
     img_augment=True,
 
     # mobilefacenet
@@ -123,7 +130,7 @@ hparams = HParams(
     expand_mouth_height_ratio=0.7,
 
     # is initially zero, will be set automatically to 0.03 later. Leads to faster convergence.
-    syncnet_wt=0.01,
+    syncnet_wt=0.005,
     syncnet_batch_size=128,
     syncnet_lr=1e-4,
     syncnet_lr_decay_rate=0.995,
@@ -136,17 +143,16 @@ hparams = HParams(
     syncnet_opt_weight_decay=0.0,
 
     disc_wt=0.07,
-    disc_initial_learning_rate=0.005,
-    disc_learning_rate_decay_rate=0.995,
-    disc_min_learning_rate=1e-7,
+    disc_initial_learning_rate=5e-5,
+    disc_learning_rate_decay_rate=0.9,
+    disc_min_learning_rate=1e-6,
     disc_opt_amsgrad=True,
     disc_opt_weight_decay=0.0,
 
     l1_wt=0.5,
     ssim_wt=0.5,
-    landmarks_wt=0.01,
+    landmarks_wt=0.0,
     landmarks_points=[2, 5, 8, 11, 14, 31, 33, 35, 48, 51, 54, 57, 62, 66],
-    merge_ref=False,
 )
 
 

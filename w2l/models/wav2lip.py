@@ -37,7 +37,7 @@ class Wav2Lip(nn.Module):
 
         last_face_x_size = hp.img_size
         last_face_y_size = hp.img_size
-        FIRST_CHANNELS = 3 if hp.merge_ref else 6
+        FIRST_CHANNELS = 6
         face_encoder_channels = [FIRST_CHANNELS]
 
         print("n_layers", n_layers)
@@ -176,6 +176,13 @@ class Wav2Lip(nn.Module):
                     nn.Sequential(Conv2dTranspose(input_channels, required_output_channels[i], kernel_size=3, stride=1, padding=0),  # 3,3
                                   Conv2d(required_output_channels[i], required_output_channels[i], kernel_size=3, stride=1, padding=1, residual=True),)
                 )
+            elif i == n_layers - 1:
+                sequentials.append(
+                    nn.Sequential(Conv2dTranspose(input_channels, required_output_channels[i], kernel_size=3, stride=(1,2), padding=1, output_padding=(0,1)),
+                                  Conv2d(
+                                      required_output_channels[i], required_output_channels[i], kernel_size=3, stride=1, padding=1, residual=True),
+                                  Conv2d(required_output_channels[i], required_output_channels[i], kernel_size=3, stride=1, padding=1, residual=True),)
+                )
             else:
                 sequentials.append(
                     nn.Sequential(Conv2dTranspose(input_channels, required_output_channels[i], kernel_size=3, stride=2, padding=1, output_padding=1),
@@ -192,7 +199,6 @@ class Wav2Lip(nn.Module):
                                           nn.Conv2d(32, 3, kernel_size=1,
                                                     stride=1, padding=0),
                                           nn.Sigmoid())
-        self.landmarks_decoder = GDC(face_final_channels*2, len(hp.landmarks_points)*2)
 
     def forward(self, audio_sequences, face_sequences):
         # face_sequences: (B, 6, T, H, W)
@@ -215,18 +221,16 @@ class Wav2Lip(nn.Module):
             x = f(x)
             feats.append(x)
 
-        cat_embedding = torch.cat(
-            (feats[-1], audio_embedding), dim=1)  # (BxT, 1024, 1, 1)
-        landmarks = self.landmarks_decoder(cat_embedding)
-
         x = audio_embedding
         for f in self.face_decoder_blocks:
             x = f(x)
             try:
-                x = torch.cat((x, feats.pop()), dim=1)
+                feat = feats.pop()
+                if len(feats) == 0:
+                    feat = feat[:, :, hp.img_size // 2:]
+                x = torch.cat((x, feat), dim=1)
             except Exception as e:
-                print(x.size())
-                print(feats[-1].size())
+                print("x", x.size(), "feat", feat.size())
                 raise e
 
         x = self.output_block(x)
@@ -238,7 +242,7 @@ class Wav2Lip(nn.Module):
         else:
             outputs = x
 
-        return outputs, landmarks  # (BxT, 3, img_size, img_size), (BxT, landmarks_points*2)
+        return outputs  # (BxT, 3, img_size, img_size)
 
 
 class Wav2Lip_disc_qual(nn.Module):
@@ -342,8 +346,8 @@ class Wav2Lip_disc_qual(nn.Module):
             nn.Conv2d(final_channels, 1, kernel_size=1, stride=1, padding=0), nn.Sigmoid())
         self.label_noise = .0
 
-    def get_lower_half(self, face_sequences):
-        return face_sequences[:, :, face_sequences.size(2)//2:]
+    # def get_lower_half(self, face_sequences):
+    #     return face_sequences[:, :, face_sequences.size(2)//2:]
 
     def to_2d(self, face_sequences):
         # B = face_sequences.size(0)
@@ -351,25 +355,21 @@ class Wav2Lip_disc_qual(nn.Module):
                                    for i in range(face_sequences.size(2))], dim=0)
         return face_sequences
 
-    def perceptual_forward(self, false_face_sequences):
-        false_face_sequences = self.to_2d(false_face_sequences)
-        false_face_sequences = self.get_lower_half(false_face_sequences)
-
-        false_feats = false_face_sequences
+    def forward_(self, half_face_sequences):
+        x = self.to_2d(half_face_sequences)
         for f in self.face_encoder_blocks:
-            false_feats = f(false_feats)
+            x = f(x)
+        return x
+
+    def perceptual_forward(self, false_half_face_sequences):
+        false_feats = self.forward_(false_half_face_sequences)
 
         false_pred_loss = F.binary_cross_entropy(self.binary_pred(false_feats).view(len(false_feats), -1),
                                                  torch.ones((len(false_feats), 1)).cuda())
 
         return false_pred_loss
 
-    def forward(self, face_sequences):
-        face_sequences = self.to_2d(face_sequences)
-        face_sequences = self.get_lower_half(face_sequences)
-
-        x = face_sequences
-        for f in self.face_encoder_blocks:
-            x = f(x)
+    def forward(self, half_face_sequences):
+        x = self.forward_(half_face_sequences)
 
         return self.binary_pred(x).view(len(x), -1)

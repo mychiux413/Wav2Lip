@@ -134,7 +134,7 @@ def cosine_loss(a, v, y):
     return loss
 
 
-def evaluate_datasets_losses(syncnet_checkpoint_path, img_size, data_root, epochs=5):
+def evaluate_datasets_losses(syncnet_checkpoint_path, data_root, epochs=5):
 
     sync_losses_path = os.path.join(data_root, "synclosses.npy")
 
@@ -155,7 +155,6 @@ def evaluate_datasets_losses(syncnet_checkpoint_path, img_size, data_root, epoch
             print(err)
     # *****************************************
 
-    hp.set_hparam('img_size', img_size)
     device = 'cuda:0'
     sync_model = SyncNet().to(device)
 
@@ -163,7 +162,7 @@ def evaluate_datasets_losses(syncnet_checkpoint_path, img_size, data_root, epoch
     checkpoint = torch.load(syncnet_checkpoint_path)
     sync_model.load_state_dict(checkpoint["state_dict"])
     test_dataset = SyncnetDataset(
-        data_root, only_true_image=True, img_size=hp.img_size)
+        data_root, only_true_image=True, img_size=96)
     data_loader = data_utils.DataLoader(
         test_dataset, batch_size=hp.syncnet_batch_size,
         num_workers=hp.num_workers,
@@ -241,6 +240,8 @@ def main():
                         help='Load the pre-trained Expert discriminator', required=False, default=None)
     parser.add_argument('--cosine_loss_mean_max_q',
                         help='Pass the loss of datasets under specified mean quantile', default=0.9, type=float)
+    parser.add_argument('--cosine_loss_mean_max',
+                        help='Pass the loss of datasets under specified mean', default=2.0, type=float)
     parser.add_argument('--cosine_loss_std_max_q',
                         help='Pass the loss of datasets under specified std quantile', default=0.9, type=float)
     parser.add_argument('--lip_mean_cut_q',
@@ -251,8 +252,6 @@ def main():
                         help='', action='store_true')
     parser.add_argument('--cosine_loss_epoch',
                         help='Specify the epoch to evaluate cosine loss', default=10, type=int)
-    parser.add_argument('--syncnet_img_size',
-                        help='Image Size of Syncnet', default=96, type=int)
     parser.add_argument('--min_img_size',
                         help='', default=0, type=int)
     parser.add_argument('--min_mean_blur_score',
@@ -263,19 +262,21 @@ def main():
                         help='Specify filelists directory', type=str, default='filelists')
     parser.add_argument('--include_train_dirs',
                         help='for dirs into training datasets with comma seperated', default="", type=str)
+    parser.add_argument('--exclude_train_dirs',
+                        help='for exclude dirs into training datasets with comma seperated', default="", type=str)
 
     args = parser.parse_args()
 
     assert os.path.exists(args.data_root)
     assert args.train_ratio < 1.0
     assert args.train_ratio > 0.0
-    include_train_dirs = args.include_train_dirs.split(",")
+    include_train_dirs = list(filter(lambda d: d.rstrip('/'), args.include_train_dirs.split(",")))
+    exclude_train_dirs = list(filter(lambda d: d.rstrip('/'), args.exclude_train_dirs.split(",")))
 
     valid_vidnames = set()
     if args.syncnet_checkpoint_path is not None:
         stat_losses = evaluate_datasets_losses(
             args.syncnet_checkpoint_path,
-            args.syncnet_img_size,
             args.data_root,
             args.cosine_loss_epoch,
         )
@@ -283,6 +284,11 @@ def main():
             [v[0] for v in stat_losses.values()], args.cosine_loss_mean_max_q)
         cosine_loss_std_max = np.quantile(
             [v[1] for v in stat_losses.values()], args.cosine_loss_std_max_q)
+        if args.cosine_loss_mean_max < cosine_loss_mean_max:
+            print("rewrite cosine_loss_mean_max from {} to {}".format(
+                cosine_loss_mean_max, args.cosine_loss_mean_max,
+            ))
+            cosine_loss_mean_max = args.cosine_loss_mean_max
         print("filter parameters:")
         print("mean_max_q: {}, mean_max: {}, std_max_q: {}, std_max: {}".format(
             args.cosine_loss_mean_max_q, cosine_loss_mean_max,
@@ -344,13 +350,15 @@ def main():
         dirpath = os.path.join(args.data_root, dirname)
         if not os.path.isdir(dirpath):
             continue
+        if dirname in exclude_train_dirs:
+            continue
         if dirname in include_train_dirs:
             print("force dir {} into training datasets".format(dirname))
             for dataname in tqdm(os.listdir(dirpath), desc="[{}] draw".format(dirname)):
                 line = os.path.join(dirname, dataname)
                 train_lines.append(line)
             continue
-        for dataname in tqdm(os.listdir(dirpath), desc="[{}] draw and filter".format(dirname)):
+        for dataname in tqdm(os.listdir(dirpath), desc="[{}] draw and filter".format(dirname), maxinterval=128):
             dataname_path = os.path.join(dirpath, dataname)
             if args.filter_outbound_lip:
                 if dataname_path not in stats:

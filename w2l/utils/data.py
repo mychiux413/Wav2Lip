@@ -1,4 +1,5 @@
 from os.path import dirname, join, basename, isfile
+from w2l.models import syncnet
 from tqdm import tqdm
 from w2l.utils import audio
 
@@ -14,9 +15,15 @@ from w2l.hparams import hparams
 import torchvision
 from multiprocessing import Pool
 
-augment = torchvision.transforms.Compose([
+augment_for_wav2lip = torchvision.transforms.Compose([
     torchvision.transforms.ColorJitter(brightness=(
         0.6, 1.4), contrast=(0.6, 1.4), saturation=(0.6, 1.4), hue=0),
+])
+
+augment_for_syncnet = torchvision.transforms.Compose([
+    torchvision.transforms.ColorJitter(brightness=(
+        0.6, 1.4), contrast=(0.6, 1.4), saturation=(0.6, 1.4), hue=0),
+    torchvision.transforms.RandomHorizontalFlip(p=0.5),
 ])
 
 
@@ -45,6 +52,19 @@ def get_image_list(data_root, split, limit=0, filelists_dir='filelists'):
 
 
 class Mels(dict):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def __len__(self):
+        return len(self.__dict__)
+
+    def __str__(self):
+        return str(self.__dict__)
+
+    def __repr__(self):
+        return repr(self.__dict__)
+
     def __setitem__(self, key, value):
         mel_path = join(key, 'mel.npy')
         assert os.path.exists(mel_path)
@@ -106,17 +126,23 @@ class Dataset(object):
         self.data_root = data_root
         self.inner_shuffle = inner_shuffle
         self.linear_space = np.array(range(len(self.all_videos)))
+        lens = [len(self.img_names[v]) for v in self.all_videos]
+        self.p = lens / np.sum(lens)
         self.sampling_half_window_size_seconds = sampling_half_window_size_seconds
         self.img_augment = img_augment
         self.data_len = len(self.all_videos)
+        if self.data_len < 10000 and self.inner_shuffle:
+            self.data_len = min(20000, int(sum([len(self.img_names[v]) for v in self.all_videos]) / self.syncnet_T))
+        self.valid_sampling_width = 1 + hparams.fps
         print("data length: ", self.data_len)
 
     def get_vidname(self, idx):
         if self.inner_shuffle:
-            idx = np.random.choice(self.linear_space)
+            idx = np.random.choice(self.linear_space, p=self.p)
         return self.all_videos[idx]
 
     def get_frame_id(self, frame):
+        # 0.jpg is the first image
         return int(basename(frame).split('.')[0])
 
     def get_window(self, start_frame):
@@ -132,6 +158,7 @@ class Dataset(object):
         return window_fnames
 
     def read_window(self, window_fnames):
+        # output: [(H, W, 3), ...]
         if window_fnames is None:
             return None
         window = []
@@ -178,7 +205,7 @@ class Dataset(object):
 
     def augment_window(self, tensor):
         # input size: T x 3 x H x W
-        return augment(tensor)
+        return augment_for_wav2lip(tensor)
 
     def prepare_window(self, window):
         # output size: 3 x T x H x W
@@ -234,10 +261,20 @@ class Dataset(object):
         img_idx = random.choice(range(imgs_len))
         img_name = img_names[img_idx]
 
-        min_wrong_idx = max(
-            0, int(img_idx - hparams.fps * self.sampling_half_window_size_seconds))
-        max_wrong_idx = min(
-            imgs_len, int(img_idx + hparams.fps * self.sampling_half_window_size_seconds))
+        goleft = random.choice([True, False])
+        if img_idx < self.valid_sampling_width:
+            goleft = False
+        elif img_idx > imgs_len - self.valid_sampling_width:
+            goleft = True
+
+        if goleft:
+            min_wrong_idx = max(
+                0, int(img_idx - hparams.fps * self.sampling_half_window_size_seconds))
+            max_wrong_idx = img_idx
+        else:
+            min_wrong_idx = int(img_idx + 1)
+            max_wrong_idx = min(
+                imgs_len, int(img_idx + hparams.fps * self.sampling_half_window_size_seconds))
         img_wrong_idx = random.choice(range(min_wrong_idx, max_wrong_idx))
         wrong_img_name = img_names[img_wrong_idx]
         return img_name, wrong_img_name
@@ -253,9 +290,6 @@ class Wav2LipDataset(Dataset):
 
             img_name, wrong_img_name = self.sample_right_wrong_images(
                 img_names)
-
-            while wrong_img_name == img_name:
-                wrong_img_name = random.choice(img_names)
 
             window_fnames = self.get_window(img_name)
             wrong_window_fnames = self.get_window(wrong_img_name)
@@ -295,23 +329,23 @@ class Wav2LipDataset(Dataset):
             wrong_window = cat[:, self.syncnet_T:(self.syncnet_T * 2), :, :]
             y = cat[:, (self.syncnet_T * 2):, :, :]
 
-            window, wrong_window, landmarks, masks = self.mask_mouth(
+            window, wrong_window, _, masks = self.mask_mouth(
                 window, wrong_window, vidname, window_fnames)
 
-            if hparams.merge_ref:
-                x = window + wrong_window
-            else:
-                x = torch.cat([window, wrong_window], axis=0)
+            x = torch.cat([window, wrong_window], axis=0)
 
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
             indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)
-            landmarks = torch.FloatTensor(landmarks)
             masks = torch.FloatTensor(masks)
-            return x, indiv_mels, mel, y, landmarks, masks
+            return x, indiv_mels, mel, y, masks
 
 
 class SyncnetDataset(Dataset):
     use_landmarks = False
+
+    def augment_window(self, tensor):
+        # input size: T x 3 x H x W
+        return augment_for_syncnet(tensor)
 
     def __getitem__(self, idx):
         while 1:
@@ -323,18 +357,21 @@ class SyncnetDataset(Dataset):
             img_name, wrong_img_name = self.sample_right_wrong_images(
                 img_names)
 
-            while wrong_img_name == img_name:
-                wrong_img_name = random.choice(img_names)
+            # The false data may not really dismatch the lip, but the true data should must match
+            # is_true = np.random.choice([True, False], replace=False, p=[0.6, 0.4])
+            # if is_true:
+            #     y = torch.ones(1).float()
+            #     chosen = img_name
+            # else:
+            #     y = torch.zeros(1).float()
+            #     chosen = wrong_img_name
 
-            if random.choice([True, False]):
-                y = torch.ones(1).float()
-                chosen = img_name
-            else:
-                y = torch.zeros(1).float()
-                chosen = wrong_img_name
-
-            window_fnames = self.get_window(chosen)
+            window_fnames = self.get_window(img_name)
             if window_fnames is None:
+                continue
+
+            false_window_fnames = self.get_window(wrong_img_name)
+            if false_window_fnames is None:
                 continue
 
             window = []
@@ -345,8 +382,25 @@ class SyncnetDataset(Dataset):
                     all_read = False
                     break
                 try:
-                    img = cv2.resize(img, (self.img_size, self.img_size))
-                except Exception as e:
+                    img = cv2.resize(img, (self.img_size, self.img_size))[self.half_img_size:]
+                except Exception as _:
+                    all_read = False
+                    break
+
+                window.append(img)
+
+            if not all_read:
+                continue
+
+            all_read = True
+            for fname in false_window_fnames:
+                img = cv2.imread(fname)
+                if img is None:
+                    all_read = False
+                    break
+                try:
+                    img = cv2.resize(img, (self.img_size, self.img_size))[self.half_img_size:]
+                except Exception as _:
                     all_read = False
                     break
 
@@ -356,20 +410,19 @@ class SyncnetDataset(Dataset):
                 continue
 
             orig_mel = self.orig_mels[vidname]
-            mel = self.crop_audio_window(orig_mel.copy(), img_name)
+            mel = self.crop_audio_window(orig_mel, img_name)
 
             if (mel.shape[0] != self.syncnet_mel_step_size):
                 continue
 
-            x = self.prepare_window(window)  # 3 x T x H x W
-            # _, x, landmarks, __ = self.mask_mouth(None, x, vidname, window_fnames)
-            x = x[:, :, x.shape[2]//2:]
-            x = np.transpose(x, (1, 0, 2, 3))
-            x = torch.FloatTensor(x)  # T x 3 x H x W
+            x = self.prepare_window(window)  # 3 x 2T x H x W
+            x = torch.FloatTensor(x)
             if self.img_augment:
+                x = x.permute((1, 0, 2, 3))  # 2T x 3 x H x W
                 x = self.augment_window(x)
-            shape = x.shape
-            x = x.reshape((shape[0] * shape[1], shape[2], shape[3]))
+                x = x.permute((1, 0, 2, 3))  # 3 x 2T x H x W
+            # shape = x.shape
+            # x = x.reshape((shape[0] * shape[1], shape[2], shape[3]))
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
 
-            return x, mel, y
+            return x, mel
