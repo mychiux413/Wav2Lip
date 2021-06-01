@@ -126,18 +126,19 @@ class Dataset(object):
         self.data_root = data_root
         self.inner_shuffle = inner_shuffle
         self.linear_space = np.array(range(len(self.all_videos)))
+        lens = [len(self.img_names[v]) for v in self.all_videos]
+        self.p = lens / np.sum(lens)
         self.sampling_half_window_size_seconds = sampling_half_window_size_seconds
         self.img_augment = img_augment
         self.data_len = len(self.all_videos)
-        if self.data_len < 10000:
+        if self.data_len < 10000 and self.inner_shuffle:
             self.data_len = min(20000, int(sum([len(self.img_names[v]) for v in self.all_videos]) / self.syncnet_T))
-        self.vacuum_width = hparams.syncnet_T
-        self.valid_sampling_width = self.vacuum_width + hparams.fps
+        self.valid_sampling_width = 1 + hparams.fps
         print("data length: ", self.data_len)
 
     def get_vidname(self, idx):
         if self.inner_shuffle:
-            idx = np.random.choice(self.linear_space)
+            idx = np.random.choice(self.linear_space, p=self.p)
         return self.all_videos[idx]
 
     def get_frame_id(self, frame):
@@ -157,6 +158,7 @@ class Dataset(object):
         return window_fnames
 
     def read_window(self, window_fnames):
+        # output: [(H, W, 3), ...]
         if window_fnames is None:
             return None
         window = []
@@ -262,15 +264,15 @@ class Dataset(object):
         goleft = random.choice([True, False])
         if img_idx < self.valid_sampling_width:
             goleft = False
-        if img_idx > imgs_len - self.valid_sampling_width:
+        elif img_idx > imgs_len - self.valid_sampling_width:
             goleft = True
 
         if goleft:
             min_wrong_idx = max(
                 0, int(img_idx - hparams.fps * self.sampling_half_window_size_seconds))
-            max_wrong_idx = int(img_idx - self.vacuum_width)
+            max_wrong_idx = img_idx
         else:
-            min_wrong_idx = int(img_idx + self.vacuum_width)
+            min_wrong_idx = int(img_idx + 1)
             max_wrong_idx = min(
                 imgs_len, int(img_idx + hparams.fps * self.sampling_half_window_size_seconds))
         img_wrong_idx = random.choice(range(min_wrong_idx, max_wrong_idx))
@@ -288,9 +290,6 @@ class Wav2LipDataset(Dataset):
 
             img_name, wrong_img_name = self.sample_right_wrong_images(
                 img_names)
-
-            while wrong_img_name == img_name:
-                wrong_img_name = random.choice(img_names)
 
             window_fnames = self.get_window(img_name)
             wrong_window_fnames = self.get_window(wrong_img_name)
@@ -358,20 +357,21 @@ class SyncnetDataset(Dataset):
             img_name, wrong_img_name = self.sample_right_wrong_images(
                 img_names)
 
-            while wrong_img_name == img_name:
-                wrong_img_name = random.choice(img_names)
-
             # The false data may not really dismatch the lip, but the true data should must match
-            is_true = np.random.choice([True, False], replace=False, p=[0.6, 0.4])
-            if is_true:
-                y = torch.ones(1).float()
-                chosen = img_name
-            else:
-                y = torch.zeros(1).float()
-                chosen = wrong_img_name
+            # is_true = np.random.choice([True, False], replace=False, p=[0.6, 0.4])
+            # if is_true:
+            #     y = torch.ones(1).float()
+            #     chosen = img_name
+            # else:
+            #     y = torch.zeros(1).float()
+            #     chosen = wrong_img_name
 
-            window_fnames = self.get_window(chosen)
+            window_fnames = self.get_window(img_name)
             if window_fnames is None:
+                continue
+
+            false_window_fnames = self.get_window(wrong_img_name)
+            if false_window_fnames is None:
                 continue
 
             window = []
@@ -383,7 +383,24 @@ class SyncnetDataset(Dataset):
                     break
                 try:
                     img = cv2.resize(img, (self.img_size, self.img_size))[self.half_img_size:]
-                except Exception as e:
+                except Exception as _:
+                    all_read = False
+                    break
+
+                window.append(img)
+
+            if not all_read:
+                continue
+
+            all_read = True
+            for fname in false_window_fnames:
+                img = cv2.imread(fname)
+                if img is None:
+                    all_read = False
+                    break
+                try:
+                    img = cv2.resize(img, (self.img_size, self.img_size))[self.half_img_size:]
+                except Exception as _:
                     all_read = False
                     break
 
@@ -393,18 +410,19 @@ class SyncnetDataset(Dataset):
                 continue
 
             orig_mel = self.orig_mels[vidname]
-            mel = self.crop_audio_window(orig_mel.copy(), img_name)
+            mel = self.crop_audio_window(orig_mel, img_name)
 
             if (mel.shape[0] != self.syncnet_mel_step_size):
                 continue
 
-            x = self.prepare_window(window)  # 3 x T x H x W
-            x = np.transpose(x, (1, 0, 2, 3))
-            x = torch.FloatTensor(x)  # T x 3 x H x W
+            x = self.prepare_window(window)  # 3 x 2T x H x W
+            x = torch.FloatTensor(x)
             if self.img_augment:
+                x = x.permute((1, 0, 2, 3))  # 2T x 3 x H x W
                 x = self.augment_window(x)
-            shape = x.shape
-            x = x.reshape((shape[0] * shape[1], shape[2], shape[3]))
+                x = x.permute((1, 0, 2, 3))  # 3 x 2T x H x W
+            # shape = x.shape
+            # x = x.reshape((shape[0] * shape[1], shape[2], shape[3]))
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
 
-            return x, mel, y
+            return x, mel

@@ -1,6 +1,9 @@
 from glob import glob
 import os
 import json
+from distutils.util import strtobool
+
+from numpy.lib.arraysetops import isin
 
 
 class HParams:
@@ -31,7 +34,10 @@ class HParams:
                 if isinstance(value, tp):
                     print("overwrite HParams from environ var: {}={}".format(
                         env_key, value_from_env))
-                    self.data[key] = tp(value_from_env)
+                    if isinstance(value, bool):
+                        self.data[key] = strtobool(value_from_env)
+                    else:
+                        self.data[key] = tp(value_from_env)
                     break
         # *************************
 

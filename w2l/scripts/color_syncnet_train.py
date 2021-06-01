@@ -15,6 +15,10 @@ from w2l.hparams import hparams
 from w2l.utils.data import SyncnetDataset
 from w2l.utils.env import use_cuda, device
 import numpy as np
+from torch.utils.tensorboard import SummaryWriter
+import random
+from time import time
+from datetime import datetime
 
 global_step = 0
 global_epoch = 0
@@ -30,8 +34,10 @@ def cosine_loss(a, v, y):
 
 
 def train(device, model, train_data_loader, test_data_loader, optimizer,
-          checkpoint_dir=None, checkpoint_interval=None, nepochs=None, K=1):
+          checkpoint_dir=None, checkpoint_interval=None, nepochs=None, K=1,
+          summary_writer=None):
 
+    model.train()
     global global_step, global_epoch
     # resumed_step = global_step
 
@@ -39,33 +45,65 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
         C = np.log(hparams.syncnet_lr /
                    hparams.syncnet_min_lr) / hparams.warm_up_epochs
 
+    half_img_size = hparams.img_size // 2
     while global_epoch < nepochs:
         if global_epoch < hparams.warm_up_epochs:
             lr = hparams.syncnet_min_lr * np.exp(C * global_epoch)
         else:
-            lr = hparams.syncnet_lr * (hparams.syncnet_lr_decay_rate ** (global_epoch - hparams.warm_up_epochs))
+            lr = hparams.syncnet_lr * \
+                (hparams.syncnet_lr_decay_rate **
+                 (global_epoch - hparams.warm_up_epochs))
             lr = max(hparams.syncnet_min_lr, lr)
         print("epoch: {}, lr: {}".format(global_epoch, lr))
+        if summary_writer is not None:
+            summary_writer.add_scalar("LearningRate/Train", lr, global_step)
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
         running_loss = 0.
         prog_bar = tqdm(enumerate(train_data_loader))
-        for step, (x, mel, y) in prog_bar:
-            if x.size(0) == 1:
+        for step, (x, mel) in prog_bar:
+            # x: B x 3 x 2T x H x W
+            B = x.size(0)
+            if B == 1:
                 continue
 
-            model.train()
+            x_true = x[:, :, :hparams.syncnet_T]
+            x_false = x[:, :, hparams.syncnet_T:]
+            x_true = x_true.reshape(
+                (B, 3 * hparams.syncnet_T, half_img_size, hparams.img_size))
+            x_false = x_false.reshape(
+                (B, 3 * hparams.syncnet_T, half_img_size, hparams.img_size))
+
+            y_true = torch.ones((B, 1), dtype=torch.float32, device=device)
+            y_false = torch.zeros((B, 1), dtype=torch.float32, device=device)
+
+            # y = torch.cat([
+            #     torch.ones(x_true.size(B), dtype=torch.float32, device=device),
+            #     torch.zeros(x_false.size(
+            #         B), dtype=torch.float32, device=device),
+            # ], dim=0)
+            # x = torch.cat([
+            #     x_true,
+            #     x_false,
+            # ], dim=0)
 
             # Transform data to CUDA device
-            x = x.to(device)
+            x_true = x_true.to(device)
+            x_false = x_false.to(device)
 
             mel = mel.to(device)
 
-            a, v = model(mel, x)
-            y = y.to(device)
+            a, v = model(mel, x_true)
+            loss_true = cosine_loss(a, v, y_true)
+            a, v = model(mel, x_false)
+            loss_false = cosine_loss(a, v, y_false)
+            # y = y.to(device)
 
-            loss = cosine_loss(a, v, y) / K
+            # a, v = model(mel, x)
+            # loss = cosine_loss(a, v, y) / K
+
+            loss = (loss_true + loss_false) / 2. / K
             loss.backward()
 
             if global_step % K == 0:
@@ -74,7 +112,7 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
 
             global_step += 1
             # cur_session_steps = global_step - resumed_step
-            running_loss += loss.item()
+            running_loss += loss.detach()
 
             if global_step == 1 or global_step % checkpoint_interval == 0:
                 save_checkpoint(
@@ -83,43 +121,74 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             if global_step % hparams.syncnet_eval_interval == 0:
                 with torch.no_grad():
                     eval_model(test_data_loader, global_step,
-                               device, model, checkpoint_dir)
+                               device, model, checkpoint_dir,
+                               summary_writer=summary_writer)
+                model.train()
 
             if global_step % K == 0:
                 next_step = step + 1
-                prog_bar.set_description(
-                    'Loss: {}'.format(running_loss * K / next_step))
+
+                delay_loss = running_loss.item() * K / next_step
+                prog_bar.set_description('Loss: {}'.format(delay_loss))
+                if summary_writer is not None:
+                    summary_writer.add_scalar(
+                        'Loss/Train', delay_loss, global_step)
 
         global_epoch += 1
 
 
-def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
+def eval_model(test_data_loader, global_step, device, model, checkpoint_dir,
+               summary_writer=None):
     eval_steps = 1400
     print('Evaluating for {} steps'.format(eval_steps))
     losses = []
+    half_img_size = hparams.img_size // 2
     while 1:
-        for step, (x, mel, y) in enumerate(test_data_loader):
-            if x.size(0) == 1:
+        for step, (x, mel) in enumerate(test_data_loader):
+            B = x.size(0)
+            if B == 1:
                 continue
+
+            x_true = x[:, :, :hparams.syncnet_T]
+            x_false = x[:, :, hparams.syncnet_T:]
+            x_true = x_true.reshape(
+                (B, 3 * hparams.syncnet_T, half_img_size, hparams.img_size))
+            x_false = x_false.reshape(
+                (B, 3 * hparams.syncnet_T, half_img_size, hparams.img_size))
+            y_true = torch.ones((B, 1), dtype=torch.float32, device=device)
+            y_false = torch.zeros((B, 1), dtype=torch.float32, device=device)
+            # x = torch.cat([
+            #     x_true,
+            #     x_false,
+            # ], dim=0)
 
             model.eval()
 
             # Transform data to CUDA device
-            x = x.to(device)
+            # x = x.to(device)
 
             mel = mel.to(device)
 
-            a, v = model(mel, x)
-            y = y.to(device)
+            a, v = model(mel, x_true)
+            loss_true = cosine_loss(a, v, y_true)
+            a, v = model(mel, x_false)
+            loss_false = cosine_loss(a, v, y_false)
 
-            loss = cosine_loss(a, v, y)
-            losses.append(loss.item())
+            # a, v = model(mel, x)
+            # y = y.to(device)
+
+            # loss = cosine_loss(a, v, y)
+            losses.append((loss_true.detach() + loss_false.detach()) / 2.)
 
             if step > eval_steps:
                 break
 
+        losses = [l.item() for l in losses]
         averaged_loss = sum(losses) / len(losses)
         print(averaged_loss)
+        if summary_writer is not None:
+            summary_writer.add_scalar(
+                'Loss/Evaluation', averaged_loss, global_step)
 
         return
 
@@ -183,7 +252,8 @@ def main(args=None):
                             help='Resumed from this checkpoint', default=None, type=str)
         parser.add_argument('--reset_optimizer',
                             help='Reset optimizer or not', action='store_true')
-        parser.add_argument('--train_limit', type=int, required=False, default=0)
+        parser.add_argument('--train_limit', type=int,
+                            required=False, default=0)
         parser.add_argument('--val_limit', type=int, required=False, default=0)
         parser.add_argument('--filelists_dir',
                             help='Specify filelists directory', type=str, default='filelists')
@@ -198,6 +268,11 @@ def main(args=None):
     if not os.path.exists(checkpoint_dir):
         os.mkdir(checkpoint_dir)
 
+    now = datetime.now()
+    log_dir = os.path.join(checkpoint_dir, "log-syncnet-{}".format(now.strftime("%Y-%m-%d-%H_%M")))
+    print("log at: {}".format(log_dir))
+    summary_writer = SummaryWriter(log_dir)
+
     # Dataset and Dataloader setup
     train_dataset = SyncnetDataset('train', args.data_root, limit=args.train_limit,
                                    sampling_half_window_size_seconds=1e10,
@@ -207,13 +282,23 @@ def main(args=None):
                                  img_augment=False,
                                  filelists_dir=args.filelists_dir)
 
+    def worker_init_fn(i):
+        seed = int(time()) + i * 100
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+        return
+
     train_data_loader = data_utils.DataLoader(
         train_dataset, batch_size=hparams.syncnet_batch_size,
-        num_workers=hparams.num_workers)
+        num_workers=hparams.num_workers,
+        pin_memory=use_cuda,
+        worker_init_fn=worker_init_fn)
 
     val_data_loader = data_utils.DataLoader(
         val_dataset, batch_size=hparams.syncnet_batch_size,
-        num_workers=max(1, hparams.num_workers // 2))
+        num_workers=max(1, hparams.num_workers // 2),
+        worker_init_fn=worker_init_fn)
 
     # Model
     model = SyncNet().to(device)
@@ -235,7 +320,8 @@ def main(args=None):
     train(device, model, train_data_loader, val_data_loader, optimizer,
           checkpoint_dir=checkpoint_dir,
           checkpoint_interval=hparams.syncnet_checkpoint_interval,
-          nepochs=hparams.nepochs, K=args.K)
+          nepochs=hparams.nepochs, K=args.K,
+          summary_writer=summary_writer)
 
 
 if __name__ == "__main__":
