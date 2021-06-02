@@ -26,6 +26,7 @@ global_epoch = 0
 syncnet = SyncNet().to(device)
 for p in syncnet.parameters():
     p.requires_grad = False
+syncnet.eval()
 
 
 def reset_global():
@@ -456,7 +457,7 @@ def load_checkpoint(path, model, optimizer, reset_optimizer=False, overwrite_glo
             optimizer.load_state_dict(checkpoint["optimizer"])
     if overwrite_global_states:
         global_step = checkpoint["global_step"]
-        global_epoch = checkpoint["global_epoch"]
+        global_epoch = checkpoint["global_epoch"] + 1
 
     return model
 
@@ -511,29 +512,32 @@ def main(args=None):
         hparams.overwrite_by_json(args.hparams)
 
     # Dataset and Dataloader setup
-    train_dataset = Wav2LipDataset('train', args.data_root,
-                                   sampling_half_window_size_seconds=hparams.sampling_half_window_size_seconds,
-                                   limit=args.train_limit,
-                                   filelists_dir=args.filelists_dir)
-    test_dataset = Wav2LipDataset('val', args.data_root,
-                                  sampling_half_window_size_seconds=hparams.sampling_half_window_size_seconds,
-                                  img_augment=False,
-                                  limit=300,  # val steps
-                                  filelists_dir=args.filelists_dir,
-                                  inner_shuffle=False)
+    train_dataset = Wav2LipDataset(
+        'train', args.data_root,
+        sampling_half_window_size_seconds=hparams.sampling_half_window_size_seconds,
+        limit=args.train_limit,
+        filelists_dir=args.filelists_dir,
+        img_augment=hparams.img_augment)
+    test_dataset = Wav2LipDataset(
+        'val', args.data_root,
+        sampling_half_window_size_seconds=hparams.sampling_half_window_size_seconds,
+        img_augment=False,
+        limit=300,  # val steps
+        filelists_dir=args.filelists_dir,
+        inner_shuffle=False)
 
     def worker_init_fn(i):
         seed = int(time()) + i * 100
         np.random.seed(seed)
         random.seed(seed)
         torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
         return
 
     train_data_loader = data_utils.DataLoader(
         train_dataset, batch_size=hparams.batch_size,
         num_workers=hparams.num_workers,
-        worker_init_fn=worker_init_fn,
-        pin_memory=use_cuda)
+        worker_init_fn=worker_init_fn)
 
     test_data_loader = data_utils.DataLoader(
         test_dataset, batch_size=hparams.batch_size,
@@ -553,13 +557,13 @@ def main(args=None):
     if args.reset_disc_optimizer:
         print("reset disc optimizer")
 
-    optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad],
-                           lr=hparams.initial_learning_rate, betas=(
-        0.5, 0.999),
+    optimizer = optim.Adam(
+        [p for p in model.parameters() if p.requires_grad],
+        lr=hparams.initial_learning_rate, betas=(0.5, 0.999),
         amsgrad=hparams.opt_amsgrad, weight_decay=hparams.opt_weight_decay)
-    disc_optimizer = optim.Adam([p for p in disc.parameters() if p.requires_grad],
-                                lr=hparams.disc_initial_learning_rate, betas=(
-        0.5, 0.999),
+    disc_optimizer = optim.Adam(
+        [p for p in disc.parameters() if p.requires_grad],
+        lr=hparams.disc_initial_learning_rate, betas=(0.5, 0.999),
         amsgrad=hparams.disc_opt_amsgrad, weight_decay=hparams.disc_opt_weight_decay)
 
     if args.checkpoint_path is not None:
