@@ -229,7 +229,7 @@ def load_checkpoint(path, model, optimizer, reset_optimizer=False):
             print("Load optimizer state from {}".format(path))
             optimizer.load_state_dict(checkpoint["optimizer"])
     global_step = checkpoint["global_step"]
-    global_epoch = checkpoint["global_epoch"]
+    global_epoch = checkpoint["global_epoch"] + 1
     if reset_optimizer:
         global_step = 0
         global_epoch = 0
@@ -285,19 +285,24 @@ def main(args=None):
         hparams.overwrite_by_json(args.hparams)
 
     # Dataset and Dataloader setup
-    train_dataset = SyncnetDataset('train', args.data_root, limit=args.train_limit,
-                                   sampling_half_window_size_seconds=1e10,
-                                   filelists_dir=args.filelists_dir)
-    val_dataset = SyncnetDataset('val', args.data_root, limit=args.val_limit,
-                                 sampling_half_window_size_seconds=1e10,
-                                 img_augment=False,
-                                 filelists_dir=args.filelists_dir)
+    train_dataset = SyncnetDataset(
+        'train', args.data_root, limit=args.train_limit,
+        img_augment=hparams.img_augment,
+        sampling_half_window_size_seconds=1e10,
+        filelists_dir=args.filelists_dir)
+    val_dataset = SyncnetDataset(
+        'val', args.data_root, limit=args.val_limit,
+        sampling_half_window_size_seconds=1e10,
+        img_augment=False,
+        filelists_dir=args.filelists_dir,
+        inner_shuffle=False)
 
     def worker_init_fn(i):
         seed = int(time()) + i * 100
         np.random.seed(seed)
         random.seed(seed)
         torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
         return
 
     train_data_loader = data_utils.DataLoader(
