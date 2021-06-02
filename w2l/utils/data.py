@@ -126,20 +126,19 @@ class Dataset(object):
         self.data_root = data_root
         self.inner_shuffle = inner_shuffle
         self.linear_space = np.array(range(len(self.all_videos)))
-        lens = [len(self.img_names[v]) for v in self.all_videos]
-        self.p = lens / np.sum(lens)
         self.sampling_half_window_size_seconds = sampling_half_window_size_seconds
         self.img_augment = img_augment
         self.data_len = len(self.all_videos)
-        if self.data_len < 10000 and self.inner_shuffle:
+        self.videos_len = len(self.all_videos)
+        if self.data_len < 20000 and self.inner_shuffle:
             self.data_len = min(20000, int(sum([len(self.img_names[v]) for v in self.all_videos]) / self.syncnet_T))
-        self.valid_sampling_width = 1 + hparams.fps
+        self.valid_sampling_width = hparams.fps + 1
         print("data length: ", self.data_len)
 
     def get_vidname(self, idx):
         if self.inner_shuffle:
-            idx = np.random.choice(self.linear_space, p=self.p)
-        return self.all_videos[idx]
+            idx = np.random.choice(self.linear_space)
+        return self.all_videos[idx % self.videos_len]
 
     def get_frame_id(self, frame):
         # 0.jpg is the first image
@@ -264,7 +263,7 @@ class Dataset(object):
         goleft = random.choice([True, False])
         if img_idx < self.valid_sampling_width:
             goleft = False
-        elif img_idx > imgs_len - self.valid_sampling_width:
+        if img_idx > imgs_len - self.valid_sampling_width:
             goleft = True
 
         if goleft:

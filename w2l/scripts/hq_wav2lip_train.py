@@ -13,7 +13,7 @@ from w2l.hparams import hparams
 from w2l.utils.data import Wav2LipDataset
 from w2l.utils.env import use_cuda, device
 from w2l.models import SyncNet_color as SyncNet
-from w2l.models import Wav2Lip, Wav2Lip_disc_qual
+from w2l.models import Wav2Lip, Wav2Lip_disc_qual, InceptionV3_disc
 from w2l.utils.loss import ms_ssim_loss
 from torch.utils.tensorboard import SummaryWriter
 import random
@@ -494,6 +494,8 @@ def main(args=None):
         parser.add_argument('--hparams',
                             help='specify hparams file, default is None, this overwrite is after the env overwrite',
                             type=str, default=None)
+        parser.add_argument('--inception',
+                            help='Use InceptionV3 Network as discriminator', action='store_true')
         args = parser.parse_args()
 
     checkpoint_dir = args.checkpoint_dir
@@ -546,7 +548,11 @@ def main(args=None):
 
     # Model
     model = Wav2Lip().to(device)
-    disc = Wav2Lip_disc_qual().to(device)
+    if args.inception:
+        print("**** Enable Inception V3 as discriminator ****")
+        disc = InceptionV3_disc().to(device)
+    else:
+        disc = Wav2Lip_disc_qual().to(device)
 
     print('total trainable params {}'.format(sum(p.numel()
           for p in model.parameters() if p.requires_grad)))

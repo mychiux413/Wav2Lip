@@ -8,6 +8,7 @@ import numpy as np
 from w2l.models.conv import Conv2dTranspose, Conv2d, nonorm_Conv2d, evaluate_conv_layers, evaluate_new_size_after_conv, create_audio_encoder
 from w2l.models.conv import evaluate_new_size_after_transpose_conv
 from w2l.models.mobilefacenet import Linear_block, BatchNorm1d, Flatten, Linear
+import torchvision
 
 
 class GDC(nn.Module):
@@ -178,7 +179,7 @@ class Wav2Lip(nn.Module):
                 )
             elif i == n_layers - 1:
                 sequentials.append(
-                    nn.Sequential(Conv2dTranspose(input_channels, required_output_channels[i], kernel_size=3, stride=(1,2), padding=1, output_padding=(0,1)),
+                    nn.Sequential(Conv2dTranspose(input_channels, required_output_channels[i], kernel_size=3, stride=(1, 2), padding=1, output_padding=(0, 1)),
                                   Conv2d(
                                       required_output_channels[i], required_output_channels[i], kernel_size=3, stride=1, padding=1, residual=True),
                                   Conv2d(required_output_channels[i], required_output_channels[i], kernel_size=3, stride=1, padding=1, residual=True),)
@@ -213,7 +214,8 @@ class Wav2Lip(nn.Module):
                 [face_sequences[:, :, i] for i in range(face_sequences.size(2))], dim=0)
 
         # face_sequences: (B x T, 6, H, W)
-        audio_embedding = self.audio_encoder(audio_sequences)  # B x T, 512, 1, 1
+        audio_embedding = self.audio_encoder(
+            audio_sequences)  # B x T, 512, 1, 1
 
         feats = []
         x = face_sequences
@@ -373,3 +375,39 @@ class Wav2Lip_disc_qual(nn.Module):
         x = self.forward_(half_face_sequences)
 
         return self.binary_pred(x).view(len(x), -1)
+
+
+inception_resize = torchvision.transforms.Resize((299, 299))
+
+
+class InceptionV3_disc(torchvision.models.Inception3):
+
+    def __init__(self):
+        super().__init__(num_classes=1, aux_logits=False)
+        pretrained_model = torchvision.models.inception_v3(pretrained=True, progress=False, aux_logits=False)
+        pretrained_dict = pretrained_model.state_dict()
+        pretrained_dict.pop('fc.weight')
+        pretrained_dict.pop('fc.bias')
+        self.load_state_dict(pretrained_dict, strict=False)
+
+    def to_2d(self, face_sequences):
+        # B = face_sequences.size(0)
+        face_sequences = torch.cat([face_sequences[:, :, i]
+                                   for i in range(face_sequences.size(2))], dim=0)
+        return face_sequences
+
+    def forward_(self, half_face_sequences):
+        x = self.to_2d(half_face_sequences)
+        return torch.sigmoid(super().forward(inception_resize(x)))
+
+    def perceptual_forward(self, false_half_face_sequences):
+
+        false_feats = self.forward_(false_half_face_sequences)
+
+        false_pred_loss = F.binary_cross_entropy(false_feats,
+                                                 torch.ones((len(false_feats), 1)).cuda())
+
+        return false_pred_loss
+
+    def forward(self, half_face_sequences):
+        return self.forward_(half_face_sequences)
