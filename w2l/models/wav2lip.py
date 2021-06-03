@@ -1,13 +1,10 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-import math
 from w2l.hparams import hparams as hp
-import numpy as np
 
 from w2l.models.conv import Conv2dTranspose, Conv2d, nonorm_Conv2d, evaluate_conv_layers, evaluate_new_size_after_conv, create_audio_encoder
-from w2l.models.conv import evaluate_new_size_after_transpose_conv
-from w2l.models.mobilefacenet import Linear_block, BatchNorm1d, Flatten, Linear
+from w2l.models.mobilefacenet import BatchNorm1d, Flatten, Linear
 import torchvision
 
 
@@ -382,13 +379,15 @@ inception_resize = torchvision.transforms.Resize((299, 299))
 
 class InceptionV3_disc(torchvision.models.Inception3):
 
-    def __init__(self):
+    def __init__(self, pretrained=False):
         super().__init__(num_classes=1, aux_logits=False)
-        pretrained_model = torchvision.models.inception_v3(pretrained=True, progress=False, aux_logits=False)
-        pretrained_dict = pretrained_model.state_dict()
-        pretrained_dict.pop('fc.weight')
-        pretrained_dict.pop('fc.bias')
-        self.load_state_dict(pretrained_dict, strict=False)
+
+        if pretrained:
+            pretrained_model = torchvision.models.inception_v3(pretrained=True, progress=False, aux_logits=False)
+            pretrained_dict = pretrained_model.state_dict()
+            pretrained_dict.pop('fc.weight')
+            pretrained_dict.pop('fc.bias')
+            self.load_state_dict(pretrained_dict, strict=False)
 
     def to_2d(self, face_sequences):
         # B = face_sequences.size(0)

@@ -519,7 +519,8 @@ def main(args=None):
         sampling_half_window_size_seconds=hparams.sampling_half_window_size_seconds,
         limit=args.train_limit,
         filelists_dir=args.filelists_dir,
-        img_augment=hparams.img_augment)
+        img_augment=hparams.img_augment,
+        inner_shuffle=False)
     test_dataset = Wav2LipDataset(
         'val', args.data_root,
         sampling_half_window_size_seconds=hparams.sampling_half_window_size_seconds,
@@ -539,7 +540,8 @@ def main(args=None):
     train_data_loader = data_utils.DataLoader(
         train_dataset, batch_size=hparams.batch_size,
         num_workers=hparams.num_workers,
-        worker_init_fn=worker_init_fn)
+        worker_init_fn=worker_init_fn,
+        shuffle=True)
 
     test_data_loader = data_utils.DataLoader(
         test_dataset, batch_size=hparams.batch_size,
@@ -550,7 +552,7 @@ def main(args=None):
     model = Wav2Lip().to(device)
     if args.inception:
         print("**** Enable Inception V3 as discriminator ****")
-        disc = InceptionV3_disc().to(device)
+        disc = InceptionV3_disc(pretrained=args.checkpoint_path is None).to(device)
     else:
         disc = Wav2Lip_disc_qual().to(device)
 

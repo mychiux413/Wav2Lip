@@ -2,6 +2,7 @@ from os.path import join
 from tqdm import tqdm
 
 from w2l.models import SyncNet_color as SyncNet
+from w2l.models import SyncNet_shuffle_color
 
 import torch
 from torch import nn
@@ -78,16 +79,6 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             y_true = torch.ones((B, 1), dtype=torch.float32, device=device)
             y_false = torch.zeros((B, 1), dtype=torch.float32, device=device)
 
-            # y = torch.cat([
-            #     torch.ones(x_true.size(B), dtype=torch.float32, device=device),
-            #     torch.zeros(x_false.size(
-            #         B), dtype=torch.float32, device=device),
-            # ], dim=0)
-            # x = torch.cat([
-            #     x_true,
-            #     x_false,
-            # ], dim=0)
-
             # Transform data to CUDA device
             x_true = x_true.to(device)
             x_false = x_false.to(device)
@@ -99,9 +90,6 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             a, v = model(mel, x_false)
             loss_false = cosine_loss(a, v, y_false)
             # y = y.to(device)
-
-            # a, v = model(mel, x)
-            # loss = cosine_loss(a, v, y) / K
 
             loss = (loss_true + loss_false) / 2. / K
             loss.backward()
@@ -262,6 +250,8 @@ def main(args=None):
                             type=str, default=None)
         parser.add_argument('--K',
                             help='Delay update', type=int, default=1)
+        parser.add_argument('--shufflenet',
+                            help='Use Shuffle net as faceencoder', action='store_true')
 
         args = parser.parse_args()
 
@@ -289,7 +279,8 @@ def main(args=None):
         'train', args.data_root, limit=args.train_limit,
         img_augment=hparams.img_augment,
         sampling_half_window_size_seconds=1e10,
-        filelists_dir=args.filelists_dir)
+        filelists_dir=args.filelists_dir,
+        inner_shuffle=False)
     val_dataset = SyncnetDataset(
         'val', args.data_root, limit=args.val_limit,
         sampling_half_window_size_seconds=1e10,
@@ -309,7 +300,8 @@ def main(args=None):
         train_dataset, batch_size=hparams.syncnet_batch_size,
         num_workers=hparams.num_workers,
         pin_memory=use_cuda,
-        worker_init_fn=worker_init_fn)
+        worker_init_fn=worker_init_fn,
+        shuffle=True)
 
     val_data_loader = data_utils.DataLoader(
         val_dataset, batch_size=hparams.syncnet_batch_size,
@@ -317,7 +309,12 @@ def main(args=None):
         worker_init_fn=worker_init_fn)
 
     # Model
-    model = SyncNet().to(device)
+    if args.shufflenet:
+        print("**** Enable ShuffleNet V2 1.0 as syncnet ****")
+        model = SyncNet_shuffle_color().to(device)
+    else:
+        model = SyncNet().to(device)
+
     print('total trainable params {}'.format(sum(p.numel()
           for p in model.parameters() if p.requires_grad)))
 

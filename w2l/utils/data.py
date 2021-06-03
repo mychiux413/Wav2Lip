@@ -40,10 +40,21 @@ def get_image_list(data_root, split, limit=0, filelists_dir='filelists'):
 
     i = 0
     with open(filelists_path) as f:
-        for line in f:
+        for line in tqdm(f, "scan data root"):
             line = line.split('#')[0]
             line = line.strip()
             dirpath = os.path.join(data_root, line)
+            if not os.path.exists(dirpath):
+                print("dirpath not exists: {}".format(dirpath))
+                continue
+            audio_path = os.path.join(dirpath, "audio.ogg")
+            if not os.path.exists(audio_path):
+                print("audio not exists: {}".format(audio_path))
+                continue
+            img_len = len(glob(dirpath + "/*.jpg"))
+            if img_len < hparams.fps * 1.5:
+                print("not enough images: {}".format(dirpath))
+                continue
             filelist.append(dirpath)
             i += 1
             if limit > 0 and i > limit:
@@ -85,6 +96,7 @@ class LandMarks(dict):
 
 
 class Dataset(object):
+    valid_sampling_width = hparams.fps + 1
     syncnet_T = hparams.syncnet_T
     syncnet_mel_step_size = hparams.syncnet_mel_step_size
     use_landmarks = True
@@ -117,7 +129,8 @@ class Dataset(object):
             for vidname in self.all_videos:
                 self.landmarks[vidname] = join(vidname, "landmarks.npy")
         for vidname in self.landmarks.keys():
-            assert vidname in self.orig_mels, "vidname {} is in landmarks but not in orig_mels".format(vidname)
+            assert vidname in self.orig_mels, "vidname {} is in landmarks but not in orig_mels".format(
+                vidname)
 
         self.img_size = hparams.img_size
         self.half_img_size = int(self.img_size / 2)
@@ -130,9 +143,9 @@ class Dataset(object):
         self.img_augment = img_augment
         self.data_len = len(self.all_videos)
         self.videos_len = len(self.all_videos)
-        if self.data_len < 20000 and self.inner_shuffle:
-            self.data_len = min(20000, int(sum([len(self.img_names[v]) for v in self.all_videos]) / self.syncnet_T))
-        self.valid_sampling_width = hparams.fps + 1
+        if self.data_len < 20000:
+            self.data_len = min(20000, int(
+                sum([len(self.img_names[v]) for v in self.all_videos]) / self.syncnet_T))
         print("data length: ", self.data_len)
 
     def get_vidname(self, idx):
@@ -284,8 +297,6 @@ class Wav2LipDataset(Dataset):
         while 1:
             vidname = self.get_vidname(idx)
             img_names = self.img_names[vidname]
-            if len(img_names) <= 3 * self.syncnet_T:
-                continue
 
             img_name, wrong_img_name = self.sample_right_wrong_images(
                 img_names)
@@ -381,7 +392,8 @@ class SyncnetDataset(Dataset):
                     all_read = False
                     break
                 try:
-                    img = cv2.resize(img, (self.img_size, self.img_size))[self.half_img_size:]
+                    img = cv2.resize(img, (self.img_size, self.img_size))[
+                        self.half_img_size:]
                 except Exception as _:
                     all_read = False
                     break
@@ -398,7 +410,8 @@ class SyncnetDataset(Dataset):
                     all_read = False
                     break
                 try:
-                    img = cv2.resize(img, (self.img_size, self.img_size))[self.half_img_size:]
+                    img = cv2.resize(img, (self.img_size, self.img_size))[
+                        self.half_img_size:]
                 except Exception as _:
                     all_read = False
                     break
