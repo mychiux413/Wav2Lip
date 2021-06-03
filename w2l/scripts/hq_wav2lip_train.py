@@ -13,6 +13,7 @@ from w2l.hparams import hparams
 from w2l.utils.data import Wav2LipDataset
 from w2l.utils.env import use_cuda, device
 from w2l.models import SyncNet_color as SyncNet
+from w2l.models import SyncNet_shuffle_color
 from w2l.models import Wav2Lip, Wav2Lip_disc_qual, InceptionV3_disc
 from w2l.utils.loss import ms_ssim_loss
 from torch.utils.tensorboard import SummaryWriter
@@ -22,12 +23,6 @@ from datetime import datetime
 
 global_step = 0
 global_epoch = 0
-
-syncnet = SyncNet().to(device)
-for p in syncnet.parameters():
-    p.requires_grad = False
-syncnet.eval()
-
 
 def reset_global():
     global global_step
@@ -100,7 +95,7 @@ def get_landmarks_loss(g_landmarks, gt_landmarks):
 # resize_for_sync = torchvision.transforms.Resize((48, 96))
 
 
-def get_sync_loss(mel, half_g):
+def get_sync_loss(syncnet, mel, half_g):
     # g: B x 3 x T x H x W, g should be masked
     half_g = torch.cat([half_g[:, :, i]
                        for i in range(hparams.syncnet_T)], dim=1)
@@ -111,7 +106,7 @@ def get_sync_loss(mel, half_g):
     return cosine_loss(a, v, y)
 
 
-def train(device, model, disc, train_data_loader, test_data_loader, optimizer, disc_optimizer,
+def train(device, model, disc, train_data_loader, test_data_loader, optimizer, disc_optimizer, syncnet,
           checkpoint_dir=None, checkpoint_interval=None, nepochs=None, K=1,
           summary_writer=None):
     global global_step, global_epoch
@@ -175,7 +170,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
             half_g = model(indiv_mels, x)
 
-            sync_loss = get_sync_loss(mel, half_g)
+            sync_loss = get_sync_loss(syncnet, mel, half_g)
 
             perceptual_loss = disc.perceptual_forward(half_g)
 
@@ -261,7 +256,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             if global_step % hparams.eval_interval == 0:
                 with torch.no_grad():
                     average_sync_loss = eval_model(
-                        test_data_loader, global_step, device, model, disc, summary_writer=summary_writer)
+                        test_data_loader, global_step, device, model, disc, syncnet, summary_writer=summary_writer)
 
                     if average_sync_loss < .6:
                         print("set syncnet_wt as", 0.03)
@@ -316,7 +311,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
         global_epoch += 1
 
 
-def eval_model(test_data_loader, global_step, device, model, disc, summary_writer=None):
+def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summary_writer=None):
     eval_steps = 300
     print('Evaluating for {} steps'.format(eval_steps))
     running_sync_loss, recon_losses, running_disc_real_loss, \
@@ -356,7 +351,7 @@ def eval_model(test_data_loader, global_step, device, model, disc, summary_write
         disc_fake_loss = F.binary_cross_entropy(
             pred, y_fake)
 
-        sync_loss = get_sync_loss(mel, half_g)
+        sync_loss = get_sync_loss(syncnet, mel, half_g)
 
         perceptual_loss = disc.perceptual_forward(half_g)
 
@@ -496,6 +491,8 @@ def main(args=None):
                             type=str, default=None)
         parser.add_argument('--inception',
                             help='Use InceptionV3 Network as discriminator', action='store_true')
+        parser.add_argument('--shufflenet',
+                            help='Use ShuffleNetV2 Network as syncnet', action='store_true')
         args = parser.parse_args()
 
     checkpoint_dir = args.checkpoint_dir
@@ -556,6 +553,15 @@ def main(args=None):
     else:
         disc = Wav2Lip_disc_qual().to(device)
 
+    if args.shufflenet:
+        print("**** Enable ShuffleNet V2 1.0 as syncnet ****")
+        syncnet = SyncNet_shuffle_color().to(device)
+    else:
+        syncnet = SyncNet().to(device)
+    for p in syncnet.parameters():
+        p.requires_grad = False
+    syncnet.eval()
+
     print('total trainable params {}'.format(sum(p.numel()
           for p in model.parameters() if p.requires_grad)))
     print('total DISC trainable params {}'.format(sum(p.numel()
@@ -593,7 +599,7 @@ def main(args=None):
     model = nn.DataParallel(model)
     # Train!
     avg_fully_ssim_loss = train(
-        device, model, disc, train_data_loader, test_data_loader, optimizer, disc_optimizer,
+        device, model, disc, train_data_loader, test_data_loader, optimizer, disc_optimizer, syncnet,
         checkpoint_dir=checkpoint_dir,
         checkpoint_interval=hparams.checkpoint_interval,
         nepochs=hparams.nepochs, K=args.K,
