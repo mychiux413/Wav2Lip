@@ -79,8 +79,8 @@ def create_ellipse_filter():
     width = img_size
     height = img_size // 2
 
-    a = (width // 2) - 20
-    b = (height // 2) - 10
+    a = (width // 2) - 90
+    b = (height // 2) - 50
 
     filt = np.ones([height, width, 1], dtype=np.float32)
     anti_filt = np.zeros([height, width, 1], dtype=np.float32)
