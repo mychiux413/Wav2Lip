@@ -27,11 +27,11 @@ class SyncNet_color(nn.Module):
             Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
             Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
 
-            Conv2d(256, 512, kernel_size=3, stride=2, padding=1),
-            Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
-            Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(256, 368, kernel_size=3, stride=2, padding=1),
+            Conv2d(368, 368, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(368, 368, kernel_size=3, stride=1, padding=1, residual=True),
 
-            Conv2d(512, 512, kernel_size=3, stride=2, padding=1),
+            Conv2d(368, 512, kernel_size=3, stride=2, padding=1),
             Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
             Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
 
@@ -144,7 +144,7 @@ class SyncNet_shuffle_color(nn.Module):
     def __init__(self):
         super(SyncNet_shuffle_color, self).__init__()
 
-        self.face_encoder = ShuffleNetV2([4, 8, 4], [24, 48, 96, 192, 512])
+        self.face_encoder = ShuffleNetV2([4, 8, 4], [24, 128, 256, 384, 512])
 
         self.audio_encoder = nn.Sequential(
             Conv2d(1, 32, kernel_size=3, stride=1, padding=1),

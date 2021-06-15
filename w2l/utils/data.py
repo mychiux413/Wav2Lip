@@ -304,24 +304,29 @@ class Wav2LipDataset(Dataset):
             window_fnames = self.get_window(img_name)
             wrong_window_fnames = self.get_window(wrong_img_name)
             if window_fnames is None or wrong_window_fnames is None:
+                idx += 1
                 continue
 
             window = self.read_window(window_fnames)
             if window is None:
+                idx += 1
                 continue
 
             wrong_window = self.read_window(wrong_window_fnames)
             if wrong_window is None:
+                idx += 1
                 continue
 
             orig_mel = self.orig_mels[vidname]
             mel = self.crop_audio_window(orig_mel.copy(), img_name)
 
             if (mel.shape[0] != self.syncnet_mel_step_size):
+                idx += 1
                 continue
 
             indiv_mels = self.get_segmented_mels(orig_mel.copy(), img_name)
             if indiv_mels is None:
+                idx += 1
                 continue
 
             window = self.prepare_window(window)  # 3 x T x H x W
@@ -361,27 +366,17 @@ class SyncnetDataset(Dataset):
         while 1:
             vidname = self.get_vidname(idx)
             img_names = self.img_names[vidname]
-            if len(img_names) <= 3 * self.syncnet_T:
-                continue
-
             img_name, wrong_img_name = self.sample_right_wrong_images(
                 img_names)
 
-            # The false data may not really dismatch the lip, but the true data should must match
-            # is_true = np.random.choice([True, False], replace=False, p=[0.6, 0.4])
-            # if is_true:
-            #     y = torch.ones(1).float()
-            #     chosen = img_name
-            # else:
-            #     y = torch.zeros(1).float()
-            #     chosen = wrong_img_name
-
             window_fnames = self.get_window(img_name)
             if window_fnames is None:
+                idx += 1
                 continue
 
             false_window_fnames = self.get_window(wrong_img_name)
             if false_window_fnames is None:
+                idx += 1
                 continue
 
             window = []
@@ -401,6 +396,7 @@ class SyncnetDataset(Dataset):
                 window.append(img)
 
             if not all_read:
+                idx += 1
                 continue
 
             all_read = True
@@ -419,12 +415,14 @@ class SyncnetDataset(Dataset):
                 window.append(img)
 
             if not all_read:
+                idx += 1
                 continue
 
             orig_mel = self.orig_mels[vidname]
             mel = self.crop_audio_window(orig_mel, img_name)
 
             if (mel.shape[0] != self.syncnet_mel_step_size):
+                idx += 1
                 continue
 
             x = self.prepare_window(window)  # 3 x 2T x H x W
@@ -433,8 +431,6 @@ class SyncnetDataset(Dataset):
                 x = x.permute((1, 0, 2, 3))  # 2T x 3 x H x W
                 x = self.augment_window(x)
                 x = x.permute((1, 0, 2, 3))  # 3 x 2T x H x W
-            # shape = x.shape
-            # x = x.reshape((shape[0] * shape[1], shape[2], shape[3]))
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
 
             return x, mel

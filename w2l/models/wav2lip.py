@@ -29,171 +29,104 @@ class Wav2Lip(nn.Module):
     def __init__(self):
         super(Wav2Lip, self).__init__()
 
-        n_layers = evaluate_conv_layers(hp.img_size) + 1
-        sequentials = []
-        channels = 8
+        self.face_encoder_blocks = nn.ModuleList([
+            nn.Sequential(Conv2d(6, 16, kernel_size=7,
+                          stride=1, padding=3)),  # 192,192
 
-        last_face_x_size = hp.img_size
-        last_face_y_size = hp.img_size
-        FIRST_CHANNELS = 6
-        face_encoder_channels = [FIRST_CHANNELS]
+            nn.Sequential(Conv2d(16, 32, kernel_size=3, stride=2, padding=1),  # 96,96
+                          Conv2d(32, 32, kernel_size=3, stride=1,
+                                 padding=1, residual=True),
+                          Conv2d(32, 32, kernel_size=3, stride=1, padding=1, residual=True)),
 
-        print("n_layers", n_layers)
-        for i in range(n_layers):
-            if i == 0:
-                sequentials.append(
-                    nn.Sequential(
-                        Conv2d(FIRST_CHANNELS, channels * 2, kernel_size=7, stride=1, padding=3))
-                )
-                last_face_x_size = evaluate_new_size_after_conv(
-                    last_face_x_size, 7, 1, 3)
-                last_face_y_size = evaluate_new_size_after_conv(
-                    last_face_y_size, 7, 1, 3)
-                face_encoder_channels.append(channels * 2)
-            elif i == 2:
-                sequentials.append(
-                    nn.Sequential(
-                        Conv2d(channels, channels * 2,
-                               kernel_size=3, stride=2, padding=1),
-                        Conv2d(channels * 2, channels * 2, kernel_size=3,
-                               stride=1, padding=1, residual=True),
-                        Conv2d(channels * 2, channels * 2, kernel_size=3,
-                               stride=1, padding=1, residual=True),
-                        Conv2d(channels * 2, channels * 2, kernel_size=3, stride=1, padding=1, residual=True))
-                )
-                last_face_x_size = evaluate_new_size_after_conv(
-                    last_face_x_size, 3, 2, 1)
-                last_face_y_size = evaluate_new_size_after_conv(
-                    last_face_y_size, 3, 2, 1)
-                face_encoder_channels.append(channels * 2)
-            elif i == n_layers - 2:
-                double_channels = min(512, channels * 2)
-                sequentials.append(
-                    nn.Sequential(Conv2d(channels, double_channels, kernel_size=3, stride=2, padding=1),
-                                  Conv2d(double_channels, double_channels, kernel_size=3, stride=1, padding=1, residual=True))
-                )
-                last_face_x_size = evaluate_new_size_after_conv(
-                    last_face_x_size, 3, 2, 1)
-                last_face_y_size = evaluate_new_size_after_conv(
-                    last_face_y_size, 3, 2, 1)
-                face_encoder_channels.append(double_channels)
-            elif i == n_layers - 1:
-                estimate = evaluate_new_size_after_conv(
-                    evaluate_new_size_after_conv(last_face_x_size, 3, 1, 0), 1, 1, 0)
+            nn.Sequential(Conv2d(32, 64, kernel_size=3, stride=2, padding=1),    # 48,48
+                          Conv2d(64, 64, kernel_size=3, stride=1,
+                                 padding=1, residual=True),
+                          Conv2d(64, 64, kernel_size=3, stride=1,
+                                 padding=1, residual=True),
+                          Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True)),
 
-                if estimate == 1:
-                    sequentials.append(
-                        nn.Sequential(Conv2d(channels, channels, kernel_size=3, stride=1, padding=0),
-                                      Conv2d(channels, channels, kernel_size=1, stride=1, padding=0))
-                    )
-                    last_face_x_size = evaluate_new_size_after_conv(
-                        last_face_x_size, 3, 1, 0)
-                    last_face_y_size = evaluate_new_size_after_conv(
-                        last_face_y_size, 3, 1, 0)
-                    last_face_x_size = evaluate_new_size_after_conv(
-                        last_face_x_size, 1, 1, 0)
-                    last_face_y_size = evaluate_new_size_after_conv(
-                        last_face_y_size, 1, 1, 0)
-                else:
-                    sequentials.append(
-                        nn.Sequential(Conv2d(channels, channels, kernel_size=3, stride=2, padding=1),
-                                      Conv2d(channels, channels,
-                                             kernel_size=3, stride=1, padding=0),
-                                      Conv2d(channels, channels, kernel_size=1, stride=1, padding=0))
-                    )
-                    last_face_x_size = evaluate_new_size_after_conv(
-                        last_face_x_size, 3, 2, 1)
-                    last_face_y_size = evaluate_new_size_after_conv(
-                        last_face_y_size, 3, 2, 1)
-                    last_face_x_size = evaluate_new_size_after_conv(
-                        last_face_x_size, 3, 1, 0)
-                    last_face_y_size = evaluate_new_size_after_conv(
-                        last_face_y_size, 3, 1, 0)
-                    last_face_x_size = evaluate_new_size_after_conv(
-                        last_face_x_size, 1, 1, 0)
-                    last_face_y_size = evaluate_new_size_after_conv(
-                        last_face_y_size, 1, 1, 0)
+            nn.Sequential(Conv2d(64, 128, kernel_size=3, stride=2, padding=1),   # 24,24
+                          Conv2d(128, 128, kernel_size=3, stride=1,
+                                 padding=1, residual=True),
+                          Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True)),
 
-                face_encoder_channels.append(channels)
-            else:
-                sequentials.append(
-                    nn.Sequential(Conv2d(channels, channels * 2, kernel_size=3, stride=2, padding=1),
-                                  Conv2d(channels * 2, channels * 2, kernel_size=3,
-                                         stride=1, padding=1, residual=True),
-                                  Conv2d(channels * 2, channels * 2, kernel_size=3, stride=1, padding=1, residual=True))
-                )
-                last_face_x_size = evaluate_new_size_after_conv(
-                    last_face_x_size, 3, 2, 1)
-                last_face_y_size = evaluate_new_size_after_conv(
-                    last_face_y_size, 3, 2, 1)
-                face_encoder_channels.append(channels * 2)
-            if i < n_layers - 1:
-                channels = min(512, channels * 2)
+            nn.Sequential(Conv2d(128, 256, kernel_size=3, stride=2, padding=1),       # 12,12
+                          Conv2d(256, 256, kernel_size=3, stride=1,
+                                 padding=1, residual=True),
+                          Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True)),
 
-            print("[wav2lip] face_encoder_blocks x, y",
-                  last_face_x_size, last_face_y_size)
-        assert last_face_x_size == 1
-        assert last_face_y_size == 1
+            nn.Sequential(Conv2d(256, 384, kernel_size=3, stride=2, padding=1),       # 6,6
+                          Conv2d(384, 384, kernel_size=3, stride=1,
+                                 padding=1, residual=True),
+                          Conv2d(384, 384, kernel_size=3, stride=1, padding=1, residual=True)),
 
-        self.face_encoder_blocks = nn.ModuleList(sequentials)
+            nn.Sequential(Conv2d(384, 512, kernel_size=3, stride=2, padding=1),     # 3,3
+                          Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),),
 
-        face_final_channels = channels
-        audio_layers = n_layers - 2
+            nn.Sequential(Conv2d(512, 512, kernel_size=3, stride=1, padding=0),     # 1, 1
+                          Conv2d(512, 512, kernel_size=1, stride=1, padding=0)), ])
 
-        self.audio_encoder, audio_shapes = create_audio_encoder(
-            audio_layers, hp.batch_size, for_wav2lip=True)
-        print("[wav2lip] review audio_encoder shapes")
-        # print("[wav2lip] face_final_channels after encode", face_final_channels)
-        print("[wav2lip] face encoder block channels", face_encoder_channels)
-        print("[wav2lip] audio_shapes")
-        print(*audio_shapes, sep='\n')
+        self.audio_encoder = nn.Sequential(
+            Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
+            Conv2d(32, 32, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(32, 32, kernel_size=3, stride=1, padding=1, residual=True),
 
-        n_layers = evaluate_conv_layers(hp.img_size) + 1
-        sequentials = []
-        input_channels = face_final_channels
+            Conv2d(32, 64, kernel_size=3, stride=(3, 1), padding=1),
+            Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
 
-        last_face_x_size = 1
-        last_face_y_size = 1
+            Conv2d(64, 128, kernel_size=3, stride=3, padding=1),
+            Conv2d(128, 128, kernel_size=3, stride=1,
+                   padding=1, residual=True),
+            Conv2d(128, 128, kernel_size=3, stride=1,
+                   padding=1, residual=True),
 
-        rev_face_encoder_blocks_channels = list(
-            reversed(face_encoder_channels))
-        FIXED_OUTPUT_CHANNELS = [64, 128, 256, 384, 512, 512, 512]
-        required_output_channels = FIXED_OUTPUT_CHANNELS[:(n_layers - 2)]
-        required_output_channels += [required_output_channels[-1]] * 2
-        required_output_channels = list(reversed(required_output_channels))
-        print("[wav2lip] required output channels", required_output_channels)
+            Conv2d(128, 256, kernel_size=3, stride=(3, 2), padding=1),
+            Conv2d(256, 256, kernel_size=3, stride=1,
+                   padding=1, residual=True),
 
-        for i in range(n_layers):
-            if i == 0:
-                sequentials.append(
-                    nn.Sequential(Conv2d(
-                        input_channels, required_output_channels[i], kernel_size=1, stride=1, padding=0),)
-                )
-            elif i == 1:
-                sequentials.append(
-                    nn.Sequential(Conv2dTranspose(input_channels, required_output_channels[i], kernel_size=3, stride=1, padding=0),  # 3,3
-                                  Conv2d(required_output_channels[i], required_output_channels[i], kernel_size=3, stride=1, padding=1, residual=True),)
-                )
-            elif i == n_layers - 1:
-                sequentials.append(
-                    nn.Sequential(Conv2dTranspose(input_channels, required_output_channels[i], kernel_size=3, stride=(1, 2), padding=1, output_padding=(0, 1)),
-                                  Conv2d(
-                                      required_output_channels[i], required_output_channels[i], kernel_size=3, stride=1, padding=1, residual=True),
-                                  Conv2d(required_output_channels[i], required_output_channels[i], kernel_size=3, stride=1, padding=1, residual=True),)
-                )
-            else:
-                sequentials.append(
-                    nn.Sequential(Conv2dTranspose(input_channels, required_output_channels[i], kernel_size=3, stride=2, padding=1, output_padding=1),
-                                  Conv2d(
-                                      required_output_channels[i], required_output_channels[i], kernel_size=3, stride=1, padding=1, residual=True),
-                                  Conv2d(required_output_channels[i], required_output_channels[i], kernel_size=3, stride=1, padding=1, residual=True),)
-                )
-            input_channels = required_output_channels[i] + \
-                rev_face_encoder_blocks_channels[i]
+            Conv2d(256, 512, kernel_size=3, stride=1, padding=0),
+            Conv2d(512, 512, kernel_size=1, stride=1, padding=0),)
 
-        self.face_decoder_blocks = nn.ModuleList(sequentials)
+        self.face_decoder_blocks = nn.ModuleList([
+            nn.Sequential(
+                Conv2d(512, 512, kernel_size=1, stride=1, padding=0),),
 
-        self.output_block = nn.Sequential(Conv2d(80, 32, kernel_size=3, stride=1, padding=1),
+            nn.Sequential(Conv2dTranspose(1024, 512, kernel_size=3, stride=1, padding=0),  # 3,3  (+512)
+                          Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),),
+
+            nn.Sequential(Conv2dTranspose(1024, 512, kernel_size=3, stride=2, padding=1, output_padding=1),
+                          Conv2d(512, 512, kernel_size=3, stride=1,
+                                 padding=1, residual=True),
+                          Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),),  # 6, 6    (+512)
+
+            nn.Sequential(Conv2dTranspose(896, 448, kernel_size=3, stride=2, padding=1, output_padding=1),
+                          Conv2d(448, 448, kernel_size=3, stride=1,
+                                 padding=1, residual=True),
+                          Conv2d(448, 448, kernel_size=3, stride=1, padding=1, residual=True),),  # 12, 12  (+384)
+
+            nn.Sequential(Conv2dTranspose(704, 352, kernel_size=3, stride=2, padding=1, output_padding=1),
+                          Conv2d(352, 352, kernel_size=3, stride=1,
+                                 padding=1, residual=True),
+                          Conv2d(352, 352, kernel_size=3, stride=1, padding=1, residual=True),),  # 24, 24  (+256)
+
+            nn.Sequential(Conv2dTranspose(480, 240, kernel_size=3, stride=2, padding=1, output_padding=1),
+                          Conv2d(240, 240, kernel_size=3, stride=1,
+                                 padding=1, residual=True),
+                          Conv2d(240, 240, kernel_size=3, stride=1, padding=1, residual=True),),  # 48, 48  (+128)
+
+            nn.Sequential(Conv2dTranspose(304, 152, kernel_size=3, stride=2, padding=1, output_padding=1),
+                          Conv2d(152, 152, kernel_size=3, stride=1,
+                                 padding=1, residual=True),
+                          Conv2d(152, 152, kernel_size=3, stride=1, padding=1, residual=True),),  # 96,96  (+64)
+
+
+            nn.Sequential(Conv2dTranspose(184, 92, kernel_size=3, stride=(1, 2), padding=1, output_padding=(0, 1)),
+                          Conv2d(92, 92, kernel_size=3, stride=1,
+                                 padding=1, residual=True),
+                          Conv2d(92, 92, kernel_size=3, stride=1, padding=1, residual=True),), ])   # 192,192  (+32)
+
+        self.output_block = nn.Sequential(Conv2d(108, 32, kernel_size=3, stride=1, padding=1), # (+16)
                                           nn.Conv2d(32, 3, kernel_size=1,
                                                     stride=1, padding=0),
                                           nn.Sigmoid())
@@ -250,7 +183,7 @@ class Wav2Lip_disc_qual(nn.Module):
 
         n_layers = evaluate_conv_layers(hp.img_size) + 1
         sequentials = []
-        FIXED_OUTPUT_CHANNELS = [32, 64, 128, 256, 512, 512, 512]
+        FIXED_OUTPUT_CHANNELS = [32, 64, 128, 256, 368, 512, 512]
         required_output_channels = FIXED_OUTPUT_CHANNELS[:(n_layers - 2)]
         required_output_channels += [required_output_channels[-1]] * 2
 
@@ -380,10 +313,11 @@ inception_resize = torchvision.transforms.Resize((299, 299))
 class InceptionV3_disc(torchvision.models.Inception3):
 
     def __init__(self, pretrained=False):
-        super().__init__(num_classes=1, aux_logits=False)
+        super().__init__(num_classes=1, aux_logits=False, init_weights=True)
 
         if pretrained:
-            pretrained_model = torchvision.models.inception_v3(pretrained=True, progress=False, aux_logits=False)
+            pretrained_model = torchvision.models.inception_v3(
+                pretrained=True, progress=False, aux_logits=False)
             pretrained_dict = pretrained_model.state_dict()
             pretrained_dict.pop('fc.weight')
             pretrained_dict.pop('fc.bias')

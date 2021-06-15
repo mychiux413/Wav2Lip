@@ -21,6 +21,7 @@ class HParams:
         return self.data[key]
 
     def set_hparam(self, key, value):
+        print("set hparam {} as {}".format(key, value))
         self.data[key] = value
 
     def overwirte_with_env(self):

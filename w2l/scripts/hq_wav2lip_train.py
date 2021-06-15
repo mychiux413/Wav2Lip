@@ -113,6 +113,9 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
     # resumed_step = global_step
 
     original_disc_wt = hparams.disc_wt
+    origin_syncnet_wt = hparams.syncnet_wt
+    init_syncnet_wt = origin_syncnet_wt / 2.0
+    hparams.set_hparam('syncnet_wt', init_syncnet_wt)
     half_img_size = hparams.img_size // 2
     expand_y_start = half_img_size - max(10, 168 - half_img_size)
 
@@ -165,19 +168,22 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             indiv_mels = indiv_mels.to(device)
             gt = gt.to(device)
             # masks = masks.to(device)
-            half_gt = gt[:, :, :, hparams.img_size // 2:]
+            half_gt = gt[:, :, :, half_img_size:]
             # Train generator now. Remove ALL grads.
 
             half_g = model(indiv_mels, x)
-
-            sync_loss = get_sync_loss(syncnet, mel, half_g)
-
-            perceptual_loss = disc.perceptual_forward(half_g)
-
-            # masks_for_g = masks.permute((0, 2, 1, 3, 4))
             ssim_gt = gt[:, :, :, expand_y_start:]
             ssim_g = torch.cat(
                 (gt[:, :, :, expand_y_start:half_img_size], half_g), dim=3)
+
+            upper_gt = gt[:, :, :, :half_img_size]
+            g = torch.cat((upper_gt, half_g), dim=3)
+
+            sync_loss = get_sync_loss(syncnet, mel, half_g)
+
+            perceptual_loss = disc.perceptual_forward(ssim_g)
+
+            # masks_for_g = masks.permute((0, 2, 1, 3, 4))
 
             # debug_dump(ssim_gt, 'temp/ssim_gt.png')
             # debug_dump(ssim_g, 'temp/ssim_g.png')
@@ -190,7 +196,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
             l1 = l1loss(half_g, half_gt)
 
-            ssim = ms_ssim_loss(ssim_g, ssim_gt)
+            ssim = ms_ssim_loss(ssim_gt, ssim_g)
             rec_loss = hparams.l1_wt * \
                 l1 + hparams.ssim_wt * ssim
 
@@ -205,14 +211,14 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                 optimizer.step()
                 optimizer.zero_grad()
 
-            pred = disc(half_gt)
+            pred = disc(ssim_gt)
             disc_batch_size = pred.size(0)
             y_real = torch.ones((disc_batch_size, 1),
                                 dtype=torch.float32, device=device)
             disc_real_loss = F.binary_cross_entropy(
                 pred, y_real)
 
-            pred = disc(half_g.detach())
+            pred = disc(ssim_g.detach())
             y_fake = torch.zeros((disc_batch_size, 1),
                                  dtype=torch.float32, device=device)
             disc_fake_loss = F.binary_cross_entropy(
@@ -228,8 +234,6 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                 disc_optimizer.zero_grad()
 
             if global_step % checkpoint_interval == 0:
-                g_zeros = torch.zeros_like(half_g)
-                g = torch.cat((g_zeros, half_g), dim=3)
                 save_sample_images(x, g, gt, global_step,
                                    checkpoint_dir)
 
@@ -259,20 +263,12 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                         test_data_loader, global_step, device, model, disc, syncnet, summary_writer=summary_writer)
 
                     if average_sync_loss < .6:
-                        print("set syncnet_wt as", 0.03)
-                        hparams.set_hparam('syncnet_wt', 0.03)
+                        print("set syncnet_wt as", origin_syncnet_wt)
+                        hparams.set_hparam('syncnet_wt', origin_syncnet_wt)
 
             next_step = step + 1
 
             if global_step % K == 0:
-                if running_disc_loss.item() / next_step * K < 2.0:
-                    if hparams.disc_wt != original_disc_wt:
-                        print(
-                            "discriminator is trustable now, set it back to:", original_disc_wt)
-                        hparams.set_hparam('disc_wt', original_disc_wt)
-                elif running_l1_loss.item() / next_step > 0.03:
-                    print("discriminator is not trustable, set weight to 0.")
-                    hparams.set_hparam('disc_wt', 0.)
 
                 _l1 = running_l1_loss.item() / next_step
                 _ssim = running_ssim_loss.item() / next_step
@@ -281,9 +277,18 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                 _perc = running_perceptual_loss.item() / next_step
                 _disc_fake = running_disc_fake_loss.item() / next_step
                 _disc_real = running_disc_real_loss.item() / next_step
+                _disc = running_disc_loss.item() / next_step * K
                 _target = running_target_loss.item() / next_step * K
+                if _disc < 0.6:
+                    if hparams.disc_wt != original_disc_wt:
+                        print(
+                            "discriminator is trustable now, set it back to:", original_disc_wt)
+                        hparams.set_hparam('disc_wt', original_disc_wt)
+                elif running_l1_loss.item() / next_step > 0.045 and hparams.disc_wt != 0. and _disc > 0.65:
+                    print("discriminator is not trustable, set weight to 0.")
+                    hparams.set_hparam('disc_wt', 0.)
                 prog_bar.set_description(
-                    'L1: {:03f}, SSIM: {:03f}, Rec: {:03f}, Sync: {:03f}, Percep: {:03f} | Fake: {:03f}, Real: {:03f} | Target: {:03f}'.format(
+                    'L1: {:03f}, SSIM: {:03f}, Rec: {:03f}, Sync: {:03f}, Percep: {:03f} | Fake: {:03f}, Real: {:03f}, Disc: {:03f} | Target: {:03f}'.format(
                         _l1,
                         _ssim,
                         _rec,
@@ -291,6 +296,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                         _perc,
                         _disc_fake,
                         _disc_real,
+                        _disc,
                         _target,
                     ))
                 if summary_writer is not None:
@@ -305,6 +311,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                         "Train/Fake", _disc_fake, global_step)
                     summary_writer.add_scalar(
                         "Train/Real", _disc_real, global_step)
+                    summary_writer.add_scalar(
+                        "Train/Disc", _disc, global_step)
                     summary_writer.add_scalar(
                         "Train/Target", _target, global_step)
 
@@ -331,21 +339,23 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         mel = mel.to(device)
         indiv_mels = indiv_mels.to(device)
         gt = gt.to(device)
+        half_g = model(indiv_mels, x)
         # masks = masks.to(device)
         half_gt = gt[:, :, :, half_img_size:]
 
-        pred = disc(half_gt)
+        ssim_gt = gt[:, :, :, expand_y_start:]
+        ssim_g = torch.cat(
+            (gt[:, :, :, expand_y_start:half_img_size], half_g), dim=3)
+        pred = disc(ssim_gt)
         disc_batch_size = pred.size(0)
         y_real = torch.ones((disc_batch_size, 1),
                             dtype=torch.float32, device=device)
         disc_real_loss = F.binary_cross_entropy(
             pred, y_real)
-
-        half_g = model(indiv_mels, x)
         # g_zeros = torch.zeros_like(half_g)
         # g = torch.cat((g_zeros, half_g), dim=3)
 
-        pred = disc(half_g)
+        pred = disc(ssim_g)
         y_fake = torch.zeros((disc_batch_size, 1),
                              dtype=torch.float32, device=device)
         disc_fake_loss = F.binary_cross_entropy(
@@ -353,15 +363,11 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
 
         sync_loss = get_sync_loss(syncnet, mel, half_g)
 
-        perceptual_loss = disc.perceptual_forward(half_g)
+        perceptual_loss = disc.perceptual_forward(ssim_g)
 
         # masks_for_g = masks.permute((0, 2, 1, 3, 4))
         # masked_g = masks_for_g * g
         # masked_gt = masks_for_g * gt
-
-        ssim_gt = gt[:, :, :, expand_y_start:]
-        ssim_g = torch.cat(
-            (gt[:, :, :, expand_y_start:half_img_size], half_g), dim=3)
 
         l1 = l1loss(half_g, half_gt)
         ssim = ms_ssim_loss(ssim_gt, ssim_g)

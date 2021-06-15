@@ -12,13 +12,13 @@ from w2l.utils import audio
 from tqdm import tqdm
 from glob import glob
 import cv2
-from functools import partial
 from PIL import Image
 from multiprocessing import Pool
+from time import time
 
 
 class SyncnetDataset(Dataset):
-    def __init__(self, data_root, only_true_image=True, img_size=96):
+    def __init__(self, data_root, img_size=96):
         self.all_videos = []
         for dirname in os.listdir(data_root):
             dirpath = os.path.join(data_root, dirname)
@@ -27,13 +27,15 @@ class SyncnetDataset(Dataset):
             for vid_dirname in tqdm(os.listdir(dirpath), desc="[{}] collect video dirs".format(dirpath)):
                 video_path = os.path.join(dirpath, vid_dirname)
                 wavpath = os.path.join(video_path, "audio.ogg")
-                if len(os.listdir(video_path)) < 3 * hp.syncnet_T + 2:
-                    print("insufficient files of dir:", vid_dirname)
+                img_len = len(glob(video_path + "/*.jpg"))
+                if img_len < hp.fps * 1.5:
+                    print("not enough images: {}".format(dirpath))
                     continue
                 if not os.path.exists(wavpath):
                     print("skip missing audio of:", vid_dirname)
                     continue
                 self.all_videos.append(video_path)
+        self.videos_len = len(self.all_videos)
 
         self.img_names = {}
         self.orig_mels = Mels()
@@ -50,39 +52,26 @@ class SyncnetDataset(Dataset):
         self.inner_shuffle = False
         self.sampling_half_window_size_seconds = 1e10
 
-        # 實驗發現, 只要是wrong image, model的分辨能力都很好, 因此不需要sampling wrong image
-        self.only_true_image = only_true_image
         self.img_size = img_size
+        self.half_img_size = img_size // 2
         self.data_len = len(self.all_videos)
         print("data length: ", self.data_len)
 
     def __getitem__(self, idx):
         while 1:
             vidname = self.get_vidname(idx)
-
             img_names = self.img_names[vidname]
-            if len(img_names) <= 3 * self.syncnet_T:
-                idx += 1
-                idx %= len(self)
-                continue
-
             img_name, wrong_img_name = self.sample_right_wrong_images(
                 img_names)
 
-            while wrong_img_name == img_name:
-                wrong_img_name = random.choice(img_names)
-
-            if self.only_true_image or random.choice([True, False]):
-                y = torch.ones(1).float()
-                chosen = img_name
-            else:
-                y = torch.zeros(1).float()
-                chosen = wrong_img_name
-
-            window_fnames = self.get_window(chosen)
+            window_fnames = self.get_window(img_name)
             if window_fnames is None:
                 idx += 1
-                idx %= len(self)
+                continue
+
+            false_window_fnames = self.get_window(wrong_img_name)
+            if false_window_fnames is None:
+                idx += 1
                 continue
 
             window = []
@@ -93,9 +82,9 @@ class SyncnetDataset(Dataset):
                     all_read = False
                     break
                 try:
-                    img = cv2.resize(
-                        img, (self.img_size, self.img_size))
-                except Exception as _:  # noqa: F841
+                    img = cv2.resize(img, (self.img_size, self.img_size))[
+                        self.half_img_size:]
+                except Exception as _:
                     all_read = False
                     break
 
@@ -103,7 +92,25 @@ class SyncnetDataset(Dataset):
 
             if not all_read:
                 idx += 1
-                idx %= len(self)
+                continue
+
+            all_read = True
+            for fname in false_window_fnames:
+                img = cv2.imread(fname)
+                if img is None:
+                    all_read = False
+                    break
+                try:
+                    img = cv2.resize(img, (self.img_size, self.img_size))[
+                        self.half_img_size:]
+                except Exception as _:
+                    all_read = False
+                    break
+
+                window.append(img)
+
+            if not all_read:
+                idx += 1
                 continue
 
             orig_mel = self.orig_mels[vidname]
@@ -111,17 +118,12 @@ class SyncnetDataset(Dataset):
 
             if (mel.shape[0] != self.syncnet_mel_step_size):
                 idx += 1
-                idx %= len(self)
                 continue
 
-            # H x W x 3 * T
-            x = np.concatenate(window, axis=2) / 255.
-            x = x.transpose(2, 0, 1)
-            x = x[:, x.shape[1]//2:]
-
+            x = self.prepare_window(window)  # 3 x 2T x H x W
             x = torch.FloatTensor(x)
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
-            return x, mel, y, os.path.relpath(vidname, self.data_root)
+            return x, mel, os.path.relpath(vidname, self.data_root)
 
 
 logloss = nn.BCELoss(reduction='none')
@@ -134,7 +136,7 @@ def cosine_loss(a, v, y):
     return loss
 
 
-def evaluate_datasets_losses(syncnet_checkpoint_path, data_root, epochs=5):
+def evaluate_datasets_losses(syncnet_checkpoint_path, data_root, epochs=5, only_true_image=False):
 
     sync_losses_path = os.path.join(data_root, "synclosses.npy")
 
@@ -162,25 +164,59 @@ def evaluate_datasets_losses(syncnet_checkpoint_path, data_root, epochs=5):
     checkpoint = torch.load(syncnet_checkpoint_path)
     sync_model.load_state_dict(checkpoint["state_dict"])
     test_dataset = SyncnetDataset(
-        data_root, only_true_image=True, img_size=96)
+        data_root, img_size=hp.img_size)
+
+    def worker_init_fn(i):
+        seed = int(time()) + i * 100
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        return
+
     data_loader = data_utils.DataLoader(
         test_dataset, batch_size=hp.syncnet_batch_size,
         num_workers=hp.num_workers,
-        persistent_workers=True)
+        worker_init_fn=worker_init_fn,
+        persistent_workers=False)
 
     sync_model.eval()
     losses = {}
+
+    half_img_size = hp.img_size // 2
     with torch.no_grad():
         for epoch in range(epochs):
-            for x, mel, y, vidnames in tqdm(data_loader, desc="[epoch {}] evaluate sync loss".format(epoch)):
+            for x, mel, vidnames in tqdm(data_loader, desc="[epoch {}] evaluate sync loss".format(epoch)):
                 for vidname in vidnames:
                     if vidname not in losses:
                         losses[vidname] = []
+
+                B = x.size(0)
+                if B == 1:
+                    continue
+
                 x = x.to(device)
                 mel = mel.to(device)
-                a, v = sync_model(mel, x)
-                y = y.to(device)
-                loss = cosine_loss(a, v, y)[:, 0].to('cpu').numpy()
+                x_true = x[:, :, :hp.syncnet_T]
+                x_false = x[:, :, hp.syncnet_T:]
+                x_true = x_true.reshape(
+                    (B, 3 * hp.syncnet_T, half_img_size, hp.img_size))
+                x_false = x_false.reshape(
+                    (B, 3 * hp.syncnet_T, half_img_size, hp.img_size))
+
+                y_true = torch.ones((B, 1), dtype=torch.float32, device=device)
+                y_false = torch.zeros((B, 1), dtype=torch.float32, device=device)
+
+                a, v = sync_model(mel, x_true)
+                loss_true = cosine_loss(a, v, y_true)[:, 0].to('cpu').numpy()
+
+                if not only_true_image:
+                    a, v = sync_model(mel, x_false)
+                    loss_false = cosine_loss(a, v, y_false)[:, 0].to('cpu').numpy()
+
+                loss = loss_true
+                if not only_true_image:
+                    loss = (loss_true + loss_false) / 2.
                 for vidname, l in zip(vidnames, loss):
                     losses[vidname].append(l)
     np.save(sync_losses_path, losses, allow_pickle=True)
