@@ -17,7 +17,7 @@ from multiprocessing import Pool
 
 augment_for_wav2lip = torchvision.transforms.Compose([
     torchvision.transforms.ColorJitter(brightness=(
-        0.6, 1.4), contrast=(0.6, 1.4), saturation=(0.6, 1.4), hue=0),
+        0.8, 1.2), contrast=(0.8, 1.2), saturation=(0.8, 1.2), hue=0),
 ])
 
 augment_for_syncnet = torchvision.transforms.Compose([
@@ -356,6 +356,9 @@ class Wav2LipDataset(Dataset):
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
             indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)
             landmarks = torch.FloatTensor(landmarks)
+
+            # indiv_mels: (T, 1, 80, 16)
+            # mel: (1, 80, 16)
             return x, indiv_mels, mel, y, landmarks
 
 

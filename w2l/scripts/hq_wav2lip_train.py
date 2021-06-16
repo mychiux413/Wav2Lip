@@ -110,8 +110,7 @@ half_img_size = hparams.img_size // 2
 def get_sync_loss(syncnet, mel, half_g, expect_true=True):
     B = half_g.size(0)
     # g: B x 3 x T x H x W
-    half_g = half_g.reshape(
-        (B, 3 * hparams.syncnet_T, half_img_size, hparams.img_size))
+    half_g = torch.cat([half_g[:, :, i] for i in range(hparams.syncnet_T)], dim=1)
     # half_g = resize_for_sync(half_g)
     # B, 3 * T, H//2, W
     a, v = syncnet(mel, half_g)
@@ -374,28 +373,28 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                         _target,
                     ))
                 if summary_writer is not None:
-                    summary_writer.add_scalar("Train/L1", _l1, global_step)
+                    summary_writer.add_scalar("Train/Gen/L1", _l1, global_step)
                     summary_writer.add_scalar(
-                        "Train/MS-SSIM", _ssim, global_step)
-                    summary_writer.add_scalar("Train/Sync", _sync, global_step)
+                        "Train/Gen/MS-SSIM", _ssim, global_step)
+                    summary_writer.add_scalar("Train/Gen/Sync", _sync, global_step)
                     summary_writer.add_scalar(
-                        "Train/Percep", _perc, global_step)
+                        "Train/Gen/Percep", _perc, global_step)
                     summary_writer.add_scalar(
-                        "Train/Fake", _disc_fake, global_step)
+                        "Train/Gen/Target", _target, global_step)
                     summary_writer.add_scalar(
-                        "Train/Real", _disc_real, global_step)
+                        "Train/Gen/Land", _landmarks, global_step)
                     summary_writer.add_scalar(
-                        "Train/Disc", _disc, global_step)
+                        "Train/Disc/Fake", _disc_fake, global_step)
                     summary_writer.add_scalar(
-                        "Train/Fake-Sync", _sync_fake, global_step)
+                        "Train/Disc/Real", _disc_real, global_step)
                     summary_writer.add_scalar(
-                        "Train/Real-Sync", _sync_real, global_step)
+                        "Train/Disc/Target", _disc, global_step)
                     summary_writer.add_scalar(
-                        "Train/Train-Sync", _sync_train, global_step)
+                        "Train/Sync/Fake", _sync_fake, global_step)
                     summary_writer.add_scalar(
-                        "Train/Target", _target, global_step)
+                        "Train/Sync/Real", _sync_real, global_step)
                     summary_writer.add_scalar(
-                        "Train/Land", _landmarks, global_step)
+                        "Train/Sync/Target", _sync_train, global_step)
 
         global_epoch += 1
 
@@ -518,22 +517,22 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         _sync_train,
         _target))
     if summary_writer is not None:
-        summary_writer.add_scalar("Evaluation/L1", _l1, global_step)
-        summary_writer.add_scalar("Evaluation/MS-SSIM", _ssim, global_step)
-        summary_writer.add_scalar("Evaluation/Sync", _sync, global_step)
-        summary_writer.add_scalar("Evaluation/Percep", _perc, global_step)
-        summary_writer.add_scalar("Evaluation/Fake", _disc_fake, global_step)
-        summary_writer.add_scalar("Evaluation/Real", _disc_real, global_step)
-        summary_writer.add_scalar("Evaluation/Land", _landmarks, global_step)
+        summary_writer.add_scalar("Evaluation/Gen/L1", _l1, global_step)
+        summary_writer.add_scalar("Evaluation/Gen/MS-SSIM", _ssim, global_step)
+        summary_writer.add_scalar("Evaluation/Gen/Sync", _sync, global_step)
+        summary_writer.add_scalar("Evaluation/Gen/Land", _landmarks, global_step)
+        summary_writer.add_scalar("Evaluation/Gen/Percep", _perc, global_step)
+        summary_writer.add_scalar("Evaluation/Gen/Target", _target, global_step)
+        summary_writer.add_scalar("Evaluation/Disc/Fake", _disc_fake, global_step)
+        summary_writer.add_scalar("Evaluation/Disc/Real", _disc_real, global_step)
         summary_writer.add_scalar(
-            "Evaluation/Disc", _disc, global_step)
+            "Evaluation/Disc/Target", _disc, global_step)
         summary_writer.add_scalar(
-            "Evaluation/Fake-Sync", _sync_fake, global_step)
+            "Evaluation/Sync/Fake", _sync_fake, global_step)
         summary_writer.add_scalar(
-            "Evaluation/Real-Sync", _sync_real, global_step)
+            "Evaluation/Sync/Real", _sync_real, global_step)
         summary_writer.add_scalar(
-            "Evaluation/Train-Sync", _sync_train, global_step)
-        summary_writer.add_scalar("Evaluation/Target", _target, global_step)
+            "Evaluation/Sync/Target", _sync_train, global_step)
 
     return _sync
 
@@ -595,7 +594,7 @@ def main(args=None):
         parser.add_argument(
             '--checkpoint_dir', help='Save checkpoints to this directory', required=True, type=str)
         parser.add_argument('--syncnet_checkpoint_path',
-                            help='Load the pre-trained Expert discriminator', required=True, type=str)
+                            help='Load the pre-trained Expert discriminator', type=str)
 
         parser.add_argument(
             '--checkpoint_path', help='Resume generator from this checkpoint', default=None, type=str)
@@ -621,15 +620,19 @@ def main(args=None):
                             help='Use InceptionV3 Network as discriminator', action='store_true')
         parser.add_argument('--shufflenet',
                             help='Use ShuffleNetV2 Network as syncnet', action='store_true')
+        parser.add_argument('--logdir',
+                            help='Tensorboard logdir', default=None, type=str)
         args = parser.parse_args()
 
     checkpoint_dir = args.checkpoint_dir
 
     now = datetime.now()
-    log_dir = os.path.join(
+    logdir = os.path.join(
         checkpoint_dir, "log-wav2lip-{}".format(now.strftime("%Y-%m-%d-%H_%M")))
-    print("log at: {}".format(log_dir))
-    summary_writer = SummaryWriter(log_dir)
+    if args.logdir is not None:
+        logdir = args.logdir
+    print("log at: {}".format(logdir))
+    summary_writer = SummaryWriter(logdir)
 
     if args.hparams is None:
         hparams_dump_path = os.path.join(
@@ -678,7 +681,7 @@ def main(args=None):
     if args.inception:
         print("**** Enable Inception V3 as discriminator ****")
         disc = InceptionV3_disc(
-            pretrained=args.checkpoint_path is None).to(device)
+            pretrained=False).to(device)
     else:
         disc = Wav2Lip_disc_qual().to(device)
 
@@ -692,6 +695,8 @@ def main(args=None):
           for p in model.parameters() if p.requires_grad)))
     print('total DISC trainable params {}'.format(sum(p.numel()
           for p in disc.parameters() if p.requires_grad)))
+    print('total SYNC trainable params {}'.format(sum(p.numel()
+          for p in syncnet.parameters() if p.requires_grad)))
     if args.reset_optimizer:
         print("reset optimizer")
     if args.reset_disc_optimizer:
@@ -720,9 +725,10 @@ def main(args=None):
         [p for p in syncnet.parameters() if p.requires_grad],
         lr=hparams.syncnet_lr, betas=(0.5, 0.999),
         amsgrad=hparams.syncnet_opt_amsgrad, weight_decay=hparams.syncnet_opt_weight_decay)
-    load_checkpoint(args.syncnet_checkpoint_path, syncnet, sync_optimizer,
-                    reset_optimizer=args.reset_syncnet_optimizer,
-                    overwrite_global_states=False)
+    if args.syncnet_checkpoint_path is not None:
+        load_checkpoint(args.syncnet_checkpoint_path, syncnet, sync_optimizer,
+                        reset_optimizer=args.reset_syncnet_optimizer,
+                        overwrite_global_states=False)
 
     if not os.path.exists(checkpoint_dir):
         os.mkdir(checkpoint_dir)

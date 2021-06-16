@@ -56,10 +56,16 @@ class SyncNet_color(nn.Module):
             Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
             Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
 
-            Conv2d(256, 512, kernel_size=3, stride=1, padding=0),
+            Conv2d(256, 368, kernel_size=3, stride=1, padding=1),
+            Conv2d(368, 368, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(368, 368, kernel_size=3, stride=1, padding=1, residual=True),
+
+            Conv2d(368, 512, kernel_size=3, stride=1, padding=0),
             Conv2d(512, 512, kernel_size=1, stride=1, padding=0),)
 
-    def forward(self, audio_sequences, face_sequences):  # audio_sequences := (B, dim, T)
+    def forward(self, audio_sequences, face_sequences):
+        # face_sequences: (B, 3 x T, H // 2, W)
+        # audio_sequences: (B, 1, 80, 16)
         face_embedding = self.face_encoder(face_sequences)
         audio_embedding = self.audio_encoder(audio_sequences)
 
@@ -144,7 +150,7 @@ class SyncNet_shuffle_color(nn.Module):
     def __init__(self):
         super(SyncNet_shuffle_color, self).__init__()
 
-        self.face_encoder = ShuffleNetV2([4, 8, 4], [24, 128, 256, 384, 512])
+        self.face_encoder = ShuffleNetV2([4, 8, 4], [16, 128, 256, 368, 512])
 
         self.audio_encoder = nn.Sequential(
             Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
@@ -163,7 +169,11 @@ class SyncNet_shuffle_color(nn.Module):
             Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
             Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
 
-            Conv2d(256, 512, kernel_size=3, stride=1, padding=0),
+            Conv2d(256, 368, kernel_size=3, stride=1, padding=1),
+            Conv2d(368, 368, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(368, 368, kernel_size=3, stride=1, padding=1, residual=True),
+
+            Conv2d(368, 512, kernel_size=3, stride=1, padding=0),
             Conv2d(512, 512, kernel_size=1, stride=1, padding=0),)
 
     def forward(self, audio_sequences, face_sequences):  # audio_sequences := (B, dim, T)
