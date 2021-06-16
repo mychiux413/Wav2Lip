@@ -121,7 +121,7 @@ class Wav2Lip(nn.Module):
                           Conv2d(152, 152, kernel_size=3, stride=1, padding=1, residual=True),),  # 96,96  (+64)
 
 
-            nn.Sequential(Conv2dTranspose(184, 92, kernel_size=3, stride=(1, 2), padding=1, output_padding=(0, 1)),
+            nn.Sequential(Conv2dTranspose(184, 92, kernel_size=3, stride=2, padding=1, output_padding=1),
                           Conv2d(92, 92, kernel_size=3, stride=1,
                                  padding=1, residual=True),
                           Conv2d(92, 92, kernel_size=3, stride=1, padding=1, residual=True),), ])   # 192,192  (+32)
@@ -130,6 +130,10 @@ class Wav2Lip(nn.Module):
                                           nn.Conv2d(32, 3, kernel_size=1,
                                                     stride=1, padding=0),
                                           nn.Sigmoid())
+        self.landmarks_decoder = nn.Sequential(
+            nn.Linear(1024, 512),
+            nn.Linear(512, len(hp.landmarks_points) * 2),
+        )
 
     def forward(self, audio_sequences, face_sequences):
         # face_sequences: (B, 6, T, H, W)
@@ -153,13 +157,26 @@ class Wav2Lip(nn.Module):
             x = f(x)
             feats.append(x)
 
+        # (B x T, 512, 1, 1)
+        face_embedding = x
+
+        # (B x T, 512, 1, 1)
         x = audio_embedding
+        if input_dim_size > 4:
+            # (B x T, 1024, 1, 1)
+            embedding = torch.cat([face_embedding, audio_embedding], dim=1).reshape((B * hp.syncnet_T, 1024))
+
+            # (B, T, 14, 2)
+            landmarks = self.landmarks_decoder(embedding).reshape((B, hp.syncnet_T, 14, 2))
+        else:
+            landmarks = None
+
         for f in self.face_decoder_blocks:
             x = f(x)
             try:
                 feat = feats.pop()
-                if len(feats) == 0:
-                    feat = feat[:, :, hp.img_size // 2:]
+                # if len(feats) == 0:
+                #     feat = feat[:, :, hp.img_size // 2:]
                 x = torch.cat((x, feat), dim=1)
             except Exception as e:
                 print("x", x.size(), "feat", feat.size())
@@ -174,7 +191,7 @@ class Wav2Lip(nn.Module):
         else:
             outputs = x
 
-        return outputs  # (BxT, 3, img_size, img_size)
+        return outputs, landmarks  # (BxT, 3, img_size, img_size)
 
 
 class Wav2Lip_disc_qual(nn.Module):
@@ -203,7 +220,7 @@ class Wav2Lip_disc_qual(nn.Module):
                     last_face_y_size, 7, 1, 3)
             elif i == 1:
                 sequentials.append(
-                    nn.Sequential(nonorm_Conv2d(input_channels, required_output_channels[i], kernel_size=5, stride=(1, 2), padding=2),
+                    nn.Sequential(nonorm_Conv2d(input_channels, required_output_channels[i], kernel_size=5, stride=(2, 2), padding=2),
                                   nonorm_Conv2d(required_output_channels[i], required_output_channels[i], kernel_size=5, stride=1, padding=2)),)
 
                 last_face_x_size = evaluate_new_size_after_conv(
@@ -326,7 +343,7 @@ class InceptionV3_disc(torchvision.models.Inception3):
     def to_2d(self, face_sequences):
         # B = face_sequences.size(0)
         face_sequences = torch.cat([face_sequences[:, :, i]
-                                   for i in range(face_sequences.size(2))], dim=0)
+                                   for i in range(hp.syncnet_T)], dim=0)
         return face_sequences
 
     def forward_(self, half_face_sequences):

@@ -69,7 +69,10 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             if B == 1:
                 continue
 
+            # x: B x 3 x T x H x W
             x_true = x[:, :, :hparams.syncnet_T]
+
+            # x: B x 3 x T x H x W
             x_false = x[:, :, hparams.syncnet_T:]
             x_true = x_true.reshape(
                 (B, 3 * hparams.syncnet_T, half_img_size, hparams.img_size))

@@ -125,6 +125,8 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
     gen = datagen(face_config_path, mel_chunks, batch_size=batch_size, start_frame=start_frame)
     model = load_model(model_path)
     print("Model loaded")
+
+    helf_img_size = hparams.img_size // 2
     model.eval()
     for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, total=len(mel_chunks) // batch_size)):
         if i == 0:
@@ -137,9 +139,10 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
         mel_batch = mel_batch.permute((0, 3, 1, 2)).to(device)
 
         with torch.no_grad():
-            half_pred = model(mel_batch, img_batch)
+            pred, _ = model(mel_batch, img_batch)
 
-        half_pred = half_pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
+        pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
+        half_pred = pred[:, helf_img_size:, :, :]
 
         for p, f, c in zip(half_pred, frames, coords):
             f = f.cpu().numpy().astype(np.uint8)

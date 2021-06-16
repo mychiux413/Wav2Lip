@@ -24,6 +24,7 @@ from datetime import datetime
 global_step = 0
 global_epoch = 0
 
+
 def reset_global():
     global global_step
     global global_epoch
@@ -50,7 +51,7 @@ def debug_dump(tensor, to_path='temp/temp.png'):
                         lname, batch_idx, t, ext), c[t])
 
 
-def save_sample_images(x, g, gt, global_step, checkpoint_dir):
+def save_sample_images(x, g, gt, global_step, checkpoint_dir, g_landmarks=None):
     # g_landmarks: (B, T, landmarks_points_len, 2)
     x = (x.detach().cpu().numpy().transpose(
         0, 2, 3, 4, 1) * 255.).astype(np.uint8)
@@ -58,6 +59,8 @@ def save_sample_images(x, g, gt, global_step, checkpoint_dir):
         0, 2, 3, 4, 1) * 255.).astype(np.uint8)
     gt = (gt.detach().cpu().numpy().transpose(
         0, 2, 3, 4, 1) * 255.).astype(np.uint8)
+    if g_landmarks is not None:
+        g_landmarks = g_landmarks.detach().cpu().numpy()
     # gt: (B, T, H, W, 3)
     refs, inps = x[..., 3:], x[..., :3]
 
@@ -66,8 +69,14 @@ def save_sample_images(x, g, gt, global_step, checkpoint_dir):
         os.mkdir(folder)
 
     collage = np.concatenate((refs, inps, g, gt), axis=-2)
-    for batch_idx, c in enumerate(collage):
+    for batch_idx, (c, l) in enumerate(zip(collage, g_landmarks)):
         for t in range(len(c)):
+            img = c[t]
+            landmarks = l[t]
+            for ratio_x, ratio_y in landmarks:
+                pos_x = int(hparams.img_size * 3 + hparams.img_size * ratio_x)
+                pos_y = int(hparams.img_size * ratio_y)
+                img[(pos_y - 2):(pos_y + 2), (pos_x - 2):(pos_x + 2), 1] = 255
             cv2.imwrite('{}/{}_{}.jpg'.format(folder, batch_idx, t), c[t])
 
 
@@ -85,28 +94,39 @@ l1loss = nn.L1Loss()
 
 
 def get_landmarks_loss(g_landmarks, gt_landmarks):
-    axis_delta = g_landmarks[:, :, :, 0] - gt_landmarks[:, :,
-                                                        :, 0] + g_landmarks[:, :, :, 1] - gt_landmarks[:, :, :, 1]
-    square_mean = torch.mean(torch.mean(axis_delta ** 2, dim=0), dim=-1)
-    loss_sum_T = torch.sum(square_mean)
-    return loss_sum_T / hparams.syncnet_T
+    # g_landmarks: # (B, T, 14, 2)
+    axis_delta = g_landmarks[:, :, :, 0] - gt_landmarks[:, :, :, 0] + \
+        g_landmarks[:, :, :, 1] - gt_landmarks[:, :, :, 1]
+    square_sum = torch.sum(axis_delta ** 2, dim=2)
+    loss_mean_T = torch.mean(square_sum, dim=1)
+    return torch.mean(loss_mean_T)
 
 
 # resize_for_sync = torchvision.transforms.Resize((48, 96))
 
+half_img_size = hparams.img_size // 2
 
-def get_sync_loss(syncnet, mel, half_g):
-    # g: B x 3 x T x H x W, g should be masked
-    half_g = torch.cat([half_g[:, :, i]
-                       for i in range(hparams.syncnet_T)], dim=1)
+
+def get_sync_loss(syncnet, mel, half_g, expect_true=True):
+    B = half_g.size(0)
+    # g: B x 3 x T x H x W
+    half_g = half_g.reshape(
+        (B, 3 * hparams.syncnet_T, half_img_size, hparams.img_size))
     # half_g = resize_for_sync(half_g)
     # B, 3 * T, H//2, W
     a, v = syncnet(mel, half_g)
-    y = torch.ones((half_g.size(0), 1), dtype=torch.float32, device=device)
+    if expect_true:
+        y = torch.ones((B, 1), dtype=torch.float32, device=device)
+    else:
+        y = torch.zeros((B, 1), dtype=torch.float32, device=device)
     return cosine_loss(a, v, y)
 
 
-def train(device, model, disc, train_data_loader, test_data_loader, optimizer, disc_optimizer, syncnet,
+l2loss = nn.MSELoss()
+
+
+def train(device, model, disc, train_data_loader, test_data_loader, optimizer, disc_optimizer,
+          syncnet, syncnet_optimizer,
           checkpoint_dir=None, checkpoint_interval=None, nepochs=None, K=1,
           summary_writer=None):
     global global_step, global_epoch
@@ -114,8 +134,11 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
     original_disc_wt = hparams.disc_wt
     origin_syncnet_wt = hparams.syncnet_wt
-    init_syncnet_wt = origin_syncnet_wt / 2.0
+    init_syncnet_wt = origin_syncnet_wt / 4.0
     hparams.set_hparam('syncnet_wt', init_syncnet_wt)
+
+    init_disc_wt = original_disc_wt / 4.0
+    hparams.set_hparam('disc_wt', init_disc_wt)
     half_img_size = hparams.img_size // 2
     expand_y_start = half_img_size - max(10, 168 - half_img_size)
 
@@ -124,6 +147,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                    hparams.min_learning_rate) / hparams.warm_up_epochs
         C_disc = np.log(hparams.disc_initial_learning_rate /
                         hparams.disc_min_learning_rate) / hparams.warm_up_epochs
+        C_sync = np.log(hparams.syncnet_lr /
+                        hparams.syncnet_min_lr) / hparams.warm_up_epochs
 
     print("WarmUp Epochs:", hparams.warm_up_epochs)
     while global_epoch < nepochs:
@@ -132,6 +157,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             lr = hparams.min_learning_rate * np.exp(C * global_epoch)
             disc_lr = hparams.disc_min_learning_rate * \
                 np.exp(C_disc * global_epoch)
+            sync_lr = hparams.syncnet_min_lr * \
+                np.exp(C_sync * global_epoch)
         else:
             lr = hparams.initial_learning_rate * \
                 (hparams.learning_rate_decay_rate **
@@ -142,42 +169,53 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                 (hparams.disc_learning_rate_decay_rate **
                  (global_epoch - hparams.warm_up_epochs))
             disc_lr = max(hparams.disc_min_learning_rate, disc_lr)
-        print("epoch: {}, lr: {}, disc_lr: {}".format(global_epoch, lr, disc_lr))
+
+            sync_lr = hparams.syncnet_lr * \
+                (hparams.syncnet_lr_decay_rate **
+                 (global_epoch - hparams.warm_up_epochs))
+            sync_lr = max(hparams.syncnet_min_lr, sync_lr)
+        print("epoch: {}, lr: {}, disc_lr: {}, sync_lr: {}".format(
+            global_epoch, lr, disc_lr, sync_lr))
         if summary_writer is not None:
             summary_writer.add_scalar("Train/Wav2Lip-LR", lr, global_step)
             summary_writer.add_scalar("Train/Disc-LR", disc_lr, global_step)
+            summary_writer.add_scalar("Train/Sync-LR", sync_lr, global_step)
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
         for param_group in disc_optimizer.param_groups:
             param_group['lr'] = disc_lr
+        for param_group in syncnet_optimizer.param_groups:
+            param_group['lr'] = sync_lr
 
-        running_sync_loss, running_rec_loss, running_perceptual_loss = 0., 0., 0.
+        running_sync_loss, running_perceptual_loss = 0., 0.
         running_disc_real_loss, running_disc_fake_loss, running_target_loss = 0., 0., 0.
         running_l1_loss, running_ssim_loss, running_disc_loss = 0., 0., 0.
+        running_sync_real_loss, running_sync_fake_loss, running_sync_train_loss = 0., 0., 0.
+        running_landmarks_loss = 0.
 
         prog_bar = tqdm(enumerate(train_data_loader))
-        for step, (x, indiv_mels, mel, gt, masks) in prog_bar:
+        for step, (x, indiv_mels, mel, gt, landmarks) in prog_bar:
             B = x.size(0)
             if B == 1:
                 continue
             disc.train()
             model.train()
+            syncnet.train()
 
             x = x.to(device)
             mel = mel.to(device)
             indiv_mels = indiv_mels.to(device)
             gt = gt.to(device)
+            landmarks = landmarks.to(device)
             # masks = masks.to(device)
+            g, landmarks_g = model(indiv_mels, x)
+
+            landmarks_loss = get_landmarks_loss(landmarks_g, landmarks)
+
             half_gt = gt[:, :, :, half_img_size:]
-            # Train generator now. Remove ALL grads.
-
-            half_g = model(indiv_mels, x)
+            half_g = g[:, :, :, half_img_size:]
             ssim_gt = gt[:, :, :, expand_y_start:]
-            ssim_g = torch.cat(
-                (gt[:, :, :, expand_y_start:half_img_size], half_g), dim=3)
-
-            upper_gt = gt[:, :, :, :half_img_size]
-            g = torch.cat((upper_gt, half_g), dim=3)
+            ssim_g = g[:, :, :, expand_y_start:]
 
             sync_loss = get_sync_loss(syncnet, mel, half_g)
 
@@ -194,14 +232,14 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             # masked_g = masks_for_g * g
             # masked_gt = masks_for_g * gt
 
-            l1 = l1loss(half_g, half_gt)
+            l1 = l1loss(g, gt)
 
             ssim = ms_ssim_loss(ssim_gt, ssim_g)
             rec_loss = hparams.l1_wt * \
                 l1 + hparams.ssim_wt * ssim
 
             loss = (hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss +
-                    (1. - hparams.syncnet_wt - hparams.disc_wt) * rec_loss)
+                    landmarks_loss * hparams.landmarks_wt + (1. - hparams.syncnet_wt - hparams.disc_wt) * rec_loss)
             loss /= K
             loss.backward()
 
@@ -227,15 +265,29 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             disc_loss = (disc_real_loss + disc_fake_loss) / K / 2.
             disc_loss.backward()
 
+            sync_real_loss = get_sync_loss(
+                syncnet, mel, half_gt, expect_true=True)
+            sync_fake_loss = get_sync_loss(
+                syncnet, mel, half_g.detach(), expect_true=False)
+
+            sync_train_loss = (sync_real_loss + sync_fake_loss) / K / 2.
+            sync_train_loss.backward()
+
             if global_step % K == 0:
                 torch.nn.utils.clip_grad_norm_(
                     disc.parameters(), 1.0, norm_type=2.0)
                 disc_optimizer.step()
                 disc_optimizer.zero_grad()
 
+                torch.nn.utils.clip_grad_norm_(
+                    syncnet.parameters(), 1.0, norm_type=2.0)
+                syncnet_optimizer.step()
+                syncnet_optimizer.zero_grad()
+
             if global_step % checkpoint_interval == 0:
                 save_sample_images(x, g, gt, global_step,
-                                   checkpoint_dir)
+                                   checkpoint_dir,
+                                   landmarks_g)
 
             # Logs
             global_step += 1
@@ -245,26 +297,29 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             running_disc_fake_loss += disc_fake_loss.detach()
             running_disc_loss += disc_loss.detach()
             running_target_loss += loss.detach()
-            running_rec_loss += rec_loss.detach()
             running_l1_loss += l1.detach()
             running_ssim_loss += ssim.detach()
             running_sync_loss += sync_loss.detach()
             running_perceptual_loss += perceptual_loss.detach()
+
+            running_sync_real_loss += sync_real_loss.detach()
+            running_sync_fake_loss += sync_fake_loss.detach()
+            running_sync_train_loss += sync_train_loss.detach()
+
+            running_landmarks_loss += landmarks_loss.detach()
 
             if global_step == 1 or global_step % checkpoint_interval == 0:
                 save_checkpoint(
                     model, optimizer, global_step, checkpoint_dir, global_epoch)
                 save_checkpoint(disc, disc_optimizer, global_step,
                                 checkpoint_dir, global_epoch, prefix='disc_')
+                save_checkpoint(syncnet, syncnet_optimizer, global_step,
+                                checkpoint_dir, global_epoch, prefix='sync_')
 
             if global_step % hparams.eval_interval == 0:
                 with torch.no_grad():
-                    average_sync_loss = eval_model(
+                    eval_model(
                         test_data_loader, global_step, device, model, disc, syncnet, summary_writer=summary_writer)
-
-                    if average_sync_loss < .6:
-                        print("set syncnet_wt as", origin_syncnet_wt)
-                        hparams.set_hparam('syncnet_wt', origin_syncnet_wt)
 
             next_step = step + 1
 
@@ -272,38 +327,56 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
                 _l1 = running_l1_loss.item() / next_step
                 _ssim = running_ssim_loss.item() / next_step
-                _rec = running_rec_loss.item() / next_step
                 _sync = running_sync_loss.item() / next_step
                 _perc = running_perceptual_loss.item() / next_step
                 _disc_fake = running_disc_fake_loss.item() / next_step
                 _disc_real = running_disc_real_loss.item() / next_step
                 _disc = running_disc_loss.item() / next_step * K
                 _target = running_target_loss.item() / next_step * K
-                if _disc < 0.6:
+
+                _sync_fake = running_sync_fake_loss.item() / next_step
+                _sync_real = running_sync_real_loss.item() / next_step
+                _sync_train = running_sync_train_loss.item() / next_step * K
+
+                _landmarks = running_landmarks_loss.item() / next_step
+
+                if _disc < 0.6 and _perc < 1.0:
                     if hparams.disc_wt != original_disc_wt:
                         print(
                             "discriminator is trustable now, set it back to:", original_disc_wt)
                         hparams.set_hparam('disc_wt', original_disc_wt)
-                elif running_l1_loss.item() / next_step > 0.045 and hparams.disc_wt != 0. and _disc > 0.65:
+                elif running_l1_loss.item() / next_step > 0.05 and hparams.disc_wt != 0. and _disc > 0.65:
                     print("discriminator is not trustable, set weight to 0.")
                     hparams.set_hparam('disc_wt', 0.)
+
+                if _sync_train < 0.6 and _sync < 1.0:
+                    if hparams.syncnet_wt != origin_syncnet_wt:
+                        print(
+                            "syncnet is trustable now, set it back to:", origin_syncnet_wt)
+                        hparams.set_hparam('syncnet_wt', origin_syncnet_wt)
+                elif running_l1_loss.item() / next_step > 0.05 and hparams.syncnet_wt != 0. and _sync_train > 0.65:
+                    print("syncnet is not trustable, set weight to 0.")
+                    hparams.set_hparam('syncnet_wt', 0.)
+
                 prog_bar.set_description(
-                    'L1: {:03f}, SSIM: {:03f}, Rec: {:03f}, Sync: {:03f}, Percep: {:03f} | Fake: {:03f}, Real: {:03f}, Disc: {:03f} | Target: {:03f}'.format(
+                    'L1: {:.3f}, SSIM: {:.3f}, Land: {:.4f}, Sync: {:.3f}, Percep: {:.3f} | Fake: {:.3f}, Real: {:.3f}, Disc: {:.3f} | Fake: {:.3f}, Real: {:.3f}, Sync-Train: {:.3f} | Target: {:.3f}'.format(
                         _l1,
                         _ssim,
-                        _rec,
+                        _landmarks,
                         _sync,
                         _perc,
                         _disc_fake,
                         _disc_real,
                         _disc,
+                        _sync_fake,
+                        _sync_real,
+                        _sync_train,
                         _target,
                     ))
                 if summary_writer is not None:
                     summary_writer.add_scalar("Train/L1", _l1, global_step)
                     summary_writer.add_scalar(
                         "Train/MS-SSIM", _ssim, global_step)
-                    summary_writer.add_scalar("Train/Rec", _rec, global_step)
                     summary_writer.add_scalar("Train/Sync", _sync, global_step)
                     summary_writer.add_scalar(
                         "Train/Percep", _perc, global_step)
@@ -314,7 +387,15 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                     summary_writer.add_scalar(
                         "Train/Disc", _disc, global_step)
                     summary_writer.add_scalar(
+                        "Train/Fake-Sync", _sync_fake, global_step)
+                    summary_writer.add_scalar(
+                        "Train/Real-Sync", _sync_real, global_step)
+                    summary_writer.add_scalar(
+                        "Train/Train-Sync", _sync_train, global_step)
+                    summary_writer.add_scalar(
                         "Train/Target", _target, global_step)
+                    summary_writer.add_scalar(
+                        "Train/Land", _landmarks, global_step)
 
         global_epoch += 1
 
@@ -322,30 +403,38 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summary_writer=None):
     eval_steps = 300
     print('Evaluating for {} steps'.format(eval_steps))
-    running_sync_loss, recon_losses, running_disc_real_loss, \
-        running_disc_fake_loss, running_perceptual_loss, running_target_loss, \
-        running_l1_loss, running_ssim_loss = [], [], [], [], [], [], [], []
+    running_sync_loss, running_disc_real_loss, \
+        running_disc_fake_loss, running_disc_train_loss, \
+        running_perceptual_loss, running_target_loss, \
+        running_l1_loss, running_ssim_loss, \
+        running_sync_fake_loss, running_sync_real_loss, \
+        running_sync_train_loss, running_landmarks_loss = [
+        ], [], [], [], [], [], [], [], [], [], [], []
 
     half_img_size = hparams.img_size // 2
     expand_y_start = half_img_size - max(10, 168 - half_img_size)
-    for step, (x, indiv_mels, mel, gt, masks) in enumerate((test_data_loader)):
+    for step, (x, indiv_mels, mel, gt, landmarks) in enumerate((test_data_loader)):
         B = x.size(0)
         if B == 1:
             continue
         model.eval()
         disc.eval()
+        syncnet.eval()
 
         x = x.to(device)
         mel = mel.to(device)
         indiv_mels = indiv_mels.to(device)
         gt = gt.to(device)
-        half_g = model(indiv_mels, x)
+        landmarks = landmarks.to(device)
+        g, landmarks_g = model(indiv_mels, x)
+
+        landmarks_loss = get_landmarks_loss(landmarks_g, landmarks)
         # masks = masks.to(device)
         half_gt = gt[:, :, :, half_img_size:]
+        half_g = g[:, :, :, half_img_size:]
 
         ssim_gt = gt[:, :, :, expand_y_start:]
-        ssim_g = torch.cat(
-            (gt[:, :, :, expand_y_start:half_img_size], half_g), dim=3)
+        ssim_g = g[:, :, :, expand_y_start:]
         pred = disc(ssim_gt)
         disc_batch_size = pred.size(0)
         y_real = torch.ones((disc_batch_size, 1),
@@ -363,56 +452,87 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
 
         sync_loss = get_sync_loss(syncnet, mel, half_g)
 
+        sync_real_loss = get_sync_loss(syncnet, mel, half_gt, expect_true=True)
+        sync_fake_loss = get_sync_loss(
+            syncnet, mel, half_g.detach(), expect_true=False)
+
         perceptual_loss = disc.perceptual_forward(ssim_g)
 
         # masks_for_g = masks.permute((0, 2, 1, 3, 4))
         # masked_g = masks_for_g * g
         # masked_gt = masks_for_g * gt
 
-        l1 = l1loss(half_g, half_gt)
+        l1 = l1loss(g, gt)
         ssim = ms_ssim_loss(ssim_gt, ssim_g)
         rec_loss = hparams.l1_wt * \
             l1 + hparams.ssim_wt * ssim
 
         loss = hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss + \
+            landmarks_loss * hparams.landmarks_wt + \
             (1. - hparams.syncnet_wt - hparams.disc_wt) * rec_loss
 
-        running_disc_real_loss.append(disc_real_loss.detach())
-        running_disc_fake_loss.append(disc_fake_loss.detach())
+        real = disc_real_loss.detach()
+        fake = disc_fake_loss.detach()
+        running_disc_real_loss.append(real)
+        running_disc_fake_loss.append(fake)
+        running_disc_train_loss.append((real + fake) / 2.0)
+
         running_target_loss.append(loss.detach())
-        recon_losses.append(rec_loss.detach())
         running_l1_loss.append(l1.detach())
         running_ssim_loss.append(ssim.detach())
         running_sync_loss.append(sync_loss.detach())
         running_perceptual_loss.append(perceptual_loss.detach())
 
+        fake = sync_fake_loss.detach()
+        real = sync_real_loss.detach()
+        running_sync_fake_loss.append(fake)
+        running_sync_real_loss.append(real)
+        running_sync_train_loss.append((fake + real) / 2.0)
+        running_landmarks_loss.append(landmarks_loss.detach())
+
         if step > eval_steps:
             break
     _l1 = np.mean([loss.item() for loss in running_l1_loss])
     _ssim = np.mean([loss.item() for loss in running_ssim_loss])
-    _rec = np.mean([loss.item() for loss in recon_losses])
     _sync = np.mean([loss.item() for loss in running_sync_loss])
     _perc = np.mean([loss.item() for loss in running_perceptual_loss])
     _disc_fake = np.mean([loss.item() for loss in running_disc_fake_loss])
     _disc_real = np.mean([loss.item() for loss in running_disc_real_loss])
+    _disc = np.mean([loss.item() for loss in running_disc_train_loss])
     _target = np.mean([loss.item() for loss in running_target_loss])
-    print('L1: {:03f}, SSIM: {:03f}, Rec: {:04f}, Sync: {:04f}, Percep: {:04f} | Fake: {:04f}, Real: {:04f} | Target: {:04f}'.format(
+    _sync_fake = np.mean([loss.item() for loss in running_sync_fake_loss])
+    _sync_real = np.mean([loss.item() for loss in running_sync_real_loss])
+    _sync_train = np.mean([loss.item() for loss in running_sync_train_loss])
+    _landmarks = np.mean([loss.item() for loss in running_landmarks_loss])
+    print('L1: {:.3f}, SSIM: {:.3f}, Land: {:.4f}, Sync: {:.3f}, Percep: {:.3f} | Fake: {:.3f}, Real: {:.3f}, Disc: {:02f} | Fake: {:.3f}, Real: {:.3f}, Sync-Train: {:.3f} | Target: {:.3f}'.format(
         _l1,
         _ssim,
-        _rec,
+        _landmarks,
         _sync,
         _perc,
         _disc_fake,
         _disc_real,
+        _disc,
+        _sync_fake,
+        _sync_real,
+        _sync_train,
         _target))
     if summary_writer is not None:
         summary_writer.add_scalar("Evaluation/L1", _l1, global_step)
         summary_writer.add_scalar("Evaluation/MS-SSIM", _ssim, global_step)
-        summary_writer.add_scalar("Evaluation/Rec", _rec, global_step)
         summary_writer.add_scalar("Evaluation/Sync", _sync, global_step)
         summary_writer.add_scalar("Evaluation/Percep", _perc, global_step)
         summary_writer.add_scalar("Evaluation/Fake", _disc_fake, global_step)
         summary_writer.add_scalar("Evaluation/Real", _disc_real, global_step)
+        summary_writer.add_scalar("Evaluation/Land", _landmarks, global_step)
+        summary_writer.add_scalar(
+            "Evaluation/Disc", _disc, global_step)
+        summary_writer.add_scalar(
+            "Evaluation/Fake-Sync", _sync_fake, global_step)
+        summary_writer.add_scalar(
+            "Evaluation/Real-Sync", _sync_real, global_step)
+        summary_writer.add_scalar(
+            "Evaluation/Train-Sync", _sync_train, global_step)
         summary_writer.add_scalar("Evaluation/Target", _target, global_step)
 
     return _sync
@@ -492,6 +612,8 @@ def main(args=None):
                             help='Reset optimizer or not', action='store_true')
         parser.add_argument('--reset_disc_optimizer',
                             help='Reset disc optimizer or not', action='store_true')
+        parser.add_argument('--reset_syncnet_optimizer',
+                            help='Reset sync optimizer or not', action='store_true')
         parser.add_argument('--hparams',
                             help='specify hparams file, default is None, this overwrite is after the env overwrite',
                             type=str, default=None)
@@ -555,7 +677,8 @@ def main(args=None):
     model = Wav2Lip().to(device)
     if args.inception:
         print("**** Enable Inception V3 as discriminator ****")
-        disc = InceptionV3_disc(pretrained=args.checkpoint_path is None).to(device)
+        disc = InceptionV3_disc(
+            pretrained=args.checkpoint_path is None).to(device)
     else:
         disc = Wav2Lip_disc_qual().to(device)
 
@@ -564,9 +687,6 @@ def main(args=None):
         syncnet = SyncNet_shuffle_color().to(device)
     else:
         syncnet = SyncNet().to(device)
-    for p in syncnet.parameters():
-        p.requires_grad = False
-    syncnet.eval()
 
     print('total trainable params {}'.format(sum(p.numel()
           for p in model.parameters() if p.requires_grad)))
@@ -596,7 +716,12 @@ def main(args=None):
                         reset_optimizer=args.reset_disc_optimizer,
                         overwrite_global_states=not args.reset_disc_optimizer)
 
-    load_checkpoint(args.syncnet_checkpoint_path, syncnet, None, reset_optimizer=True,
+    sync_optimizer = optim.Adam(
+        [p for p in syncnet.parameters() if p.requires_grad],
+        lr=hparams.syncnet_lr, betas=(0.5, 0.999),
+        amsgrad=hparams.syncnet_opt_amsgrad, weight_decay=hparams.syncnet_opt_weight_decay)
+    load_checkpoint(args.syncnet_checkpoint_path, syncnet, sync_optimizer,
+                    reset_optimizer=args.reset_syncnet_optimizer,
                     overwrite_global_states=False)
 
     if not os.path.exists(checkpoint_dir):
@@ -605,7 +730,8 @@ def main(args=None):
     model = nn.DataParallel(model)
     # Train!
     avg_fully_ssim_loss = train(
-        device, model, disc, train_data_loader, test_data_loader, optimizer, disc_optimizer, syncnet,
+        device, model, disc, train_data_loader, test_data_loader, optimizer, disc_optimizer,
+        syncnet, sync_optimizer,
         checkpoint_dir=checkpoint_dir,
         checkpoint_interval=hparams.checkpoint_interval,
         nepochs=hparams.nepochs, K=args.K,

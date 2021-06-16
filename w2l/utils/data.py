@@ -233,37 +233,41 @@ class Dataset(object):
 
     def mask_mouth(self, window, wrong_window, vidname, window_fnames):
         fnames = list(map(os.path.basename, window_fnames))
-        landmarks = [self.landmarks[vidname][fname] for fname in fnames]
-        masks = []
-        for i, landmark in enumerate(landmarks):
-            mouth_landmark = landmark[49:]
-            mouth_x1 = min(mouth_landmark[:, 0]) * self.img_size
-            mouth_x2 = max(mouth_landmark[:, 0]) * self.img_size
-            mouth_y1 = min(mouth_landmark[:, 1]) * self.img_size
-            mouth_y2 = max(mouth_landmark[:, 1]) * self.img_size
-            mouth_width = mouth_x2 - mouth_x1
-            mouth_height = mouth_y2 - mouth_y1
-            mouth_x1 = max(0, int(mouth_x1 - mouth_width *
-                           hparams.expand_mouth_width_ratio - 5))
-            mouth_x1 = min(mouth_x1, self.x1_mask_edge)
-            mouth_x2 = min(self.img_size, int(
-                mouth_x2 + mouth_width * hparams.expand_mouth_width_ratio + 5))
-            mouth_x2 = max(mouth_x2, self.x2_mask_edge)
-            mouth_y1 = max(self.half_img_size, int(mouth_y1 - mouth_height *
-                           hparams.expand_mouth_height_ratio - 5))
-            mouth_y2 = min(self.img_size, int(
-                mouth_y2 + mouth_height * hparams.expand_mouth_height_ratio + 5))
-
-            mask = None
-            mask = np.zeros((1, self.img_size, self.img_size))
-            mask[:, mouth_y1:mouth_y2, mouth_x1:mouth_x2] = 1.
-            masks.append(mask)
+        landmarks = [self.landmarks[vidname][fname][hparams.landmarks_points] for fname in fnames]
+        # masks = []
+        mouth_x1 = int(0.08 * self.img_size)
+        mouth_x2 = int(0.92 * self.img_size)
+        mouth_y1 = int(0.64 * self.img_size)
+        mouth_y2 = int(0.95 * self.img_size)
+        mask = np.zeros((1, self.img_size, self.img_size))
+        mask[:, mouth_y1:mouth_y2, mouth_x1:mouth_x2] = 1.
+        # for i, landmark in enumerate(landmarks):
+        for i in range(len(fnames)):
+            # mouth_landmark = landmark[49:]
+            # mouth_x1 = min(mouth_landmark[:, 0]) * self.img_size
+            # mouth_x2 = max(mouth_landmark[:, 0]) * self.img_size
+            # mouth_y1 = min(mouth_landmark[:, 1]) * self.img_size
+            # mouth_y2 = max(mouth_landmark[:, 1]) * self.img_size
+            # mouth_width = mouth_x2 - mouth_x1
+            # mouth_height = mouth_y2 - mouth_y1
+            # mouth_x1 = max(0, int(mouth_x1 - mouth_width *
+            #                hparams.expand_mouth_width_ratio - 5))
+            # mouth_x1 = min(mouth_x1, self.x1_mask_edge)
+            # mouth_x2 = min(self.img_size, int(
+            #     mouth_x2 + mouth_width * hparams.expand_mouth_width_ratio + 5))
+            # mouth_x2 = max(mouth_x2, self.x2_mask_edge)
+            # mouth_y1 = int(mouth_y1 - mouth_height * hparams.expand_mouth_height_ratio - 5)
+            # mouth_y2 = min(self.img_size, int(
+            #     mouth_y2 + mouth_height * hparams.expand_mouth_height_ratio + 5))
+            # mask = np.zeros((1, self.img_size, self.img_size))
+            # mask[:, mouth_y1:mouth_y2, mouth_x1:mouth_x2] = 1.
+            # masks.append(mask)
             if wrong_window is not None:
                 wrong_window[:, i, :, :] *= mask
 
             if window is not None:
                 window[:, i, mouth_y1:mouth_y2, mouth_x1:mouth_x2] = 0.
-        return window, wrong_window, landmarks, masks
+        return window, wrong_window, landmarks
 
     def __len__(self):
         return self.data_len
@@ -344,15 +348,15 @@ class Wav2LipDataset(Dataset):
             wrong_window = cat[:, self.syncnet_T:(self.syncnet_T * 2), :, :]
             y = cat[:, (self.syncnet_T * 2):, :, :]
 
-            window, wrong_window, _, masks = self.mask_mouth(
-                window, wrong_window, vidname, window_fnames)
+            window, _, landmarks = self.mask_mouth(
+                window, None, vidname, window_fnames)
 
             x = torch.cat([window, wrong_window], axis=0)
 
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
             indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)
-            masks = torch.FloatTensor(masks)
-            return x, indiv_mels, mel, y, masks
+            landmarks = torch.FloatTensor(landmarks)
+            return x, indiv_mels, mel, y, landmarks
 
 
 class SyncnetDataset(Dataset):
