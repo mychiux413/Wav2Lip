@@ -110,7 +110,8 @@ half_img_size = hparams.img_size // 2
 def get_sync_loss(syncnet, mel, half_g, expect_true=True):
     B = half_g.size(0)
     # g: B x 3 x T x H x W
-    half_g = torch.cat([half_g[:, :, i] for i in range(hparams.syncnet_T)], dim=1)
+    # half_g = torch.cat([half_g[:, :, i] for i in range(hparams.syncnet_T)], dim=1)
+    half_g = half_g.reshape((B, 3 * hparams.syncnet_T, half_img_size, hparams.img_size))
     # half_g = resize_for_sync(half_g)
     # B, 3 * T, H//2, W
     a, v = syncnet(mel, half_g)
@@ -208,6 +209,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             landmarks = landmarks.to(device)
             # masks = masks.to(device)
             g, landmarks_g = model(indiv_mels, x)
+            # g: (B, 3, T, img_size, img_size)
 
             landmarks_loss = get_landmarks_loss(landmarks_g, landmarks)
 
@@ -339,23 +341,23 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
                 _landmarks = running_landmarks_loss.item() / next_step
 
-                if _disc < 0.6 and _perc < 1.0:
+                if _disc < 0.7 and _perc < 1.0:
                     if hparams.disc_wt != original_disc_wt:
                         print(
                             "discriminator is trustable now, set it back to:", original_disc_wt)
                         hparams.set_hparam('disc_wt', original_disc_wt)
-                elif running_l1_loss.item() / next_step > 0.05 and hparams.disc_wt != 0. and _disc > 0.65:
+                elif running_l1_loss.item() / next_step > 0.05 and hparams.disc_wt != 0.001 and _disc > 0.8:
                     print("discriminator is not trustable, set weight to 0.")
-                    hparams.set_hparam('disc_wt', 0.)
+                    hparams.set_hparam('disc_wt', 0.001)
 
-                if _sync_train < 0.6 and _sync < 1.0:
+                if _sync_train < 0.7 and _sync < 1.0:
                     if hparams.syncnet_wt != origin_syncnet_wt:
                         print(
                             "syncnet is trustable now, set it back to:", origin_syncnet_wt)
                         hparams.set_hparam('syncnet_wt', origin_syncnet_wt)
-                elif running_l1_loss.item() / next_step > 0.05 and hparams.syncnet_wt != 0. and _sync_train > 0.65:
+                elif running_l1_loss.item() / next_step > 0.05 and hparams.syncnet_wt != 0.001 and _sync_train > 0.8:
                     print("syncnet is not trustable, set weight to 0.")
-                    hparams.set_hparam('syncnet_wt', 0.)
+                    hparams.set_hparam('syncnet_wt', 0.001)
 
                 prog_bar.set_description(
                     'L1: {:.3f}, SSIM: {:.3f}, Land: {:.4f}, Sync: {:.3f}, Percep: {:.3f} | Fake: {:.3f}, Real: {:.3f}, Disc: {:.3f} | Fake: {:.3f}, Real: {:.3f}, Sync-Train: {:.3f} | Target: {:.3f}'.format(
@@ -503,7 +505,7 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
     _sync_real = np.mean([loss.item() for loss in running_sync_real_loss])
     _sync_train = np.mean([loss.item() for loss in running_sync_train_loss])
     _landmarks = np.mean([loss.item() for loss in running_landmarks_loss])
-    print('L1: {:.3f}, SSIM: {:.3f}, Land: {:.4f}, Sync: {:.3f}, Percep: {:.3f} | Fake: {:.3f}, Real: {:.3f}, Disc: {:02f} | Fake: {:.3f}, Real: {:.3f}, Sync-Train: {:.3f} | Target: {:.3f}'.format(
+    print('L1: {:.3f}, SSIM: {:.3f}, Land: {:.4f}, Sync: {:.3f}, Percep: {:.3f} | Fake: {:.3f}, Real: {:.3f}, Disc: {:.3f} | Fake: {:.3f}, Real: {:.3f}, Sync-Train: {:.3f} | Target: {:.3f}'.format(
         _l1,
         _ssim,
         _landmarks,

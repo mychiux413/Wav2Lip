@@ -22,7 +22,7 @@ augment_for_wav2lip = torchvision.transforms.Compose([
 
 augment_for_syncnet = torchvision.transforms.Compose([
     torchvision.transforms.ColorJitter(brightness=(
-        0.6, 1.4), contrast=(0.6, 1.4), saturation=(0.6, 1.4), hue=0),
+        0.8, 1.2), contrast=(0.8, 1.2), saturation=(0.8, 1.2), hue=0),
     torchvision.transforms.RandomHorizontalFlip(p=0.5),
 ])
 
@@ -220,10 +220,15 @@ class Dataset(object):
         return augment_for_wav2lip(tensor)
 
     def prepare_window(self, window):
-        # output size: 3 x T x H x W
+        # window: [(H, W, 3), ...]
+
+        # (2*T, H, W, 3)
         x = np.asarray(window) / 255.
+
+        # (3, 2*T, H, W)
         x = np.transpose(x, (3, 0, 1, 2))
 
+        # output size: 3 x 2*T x H x W
         return x
 
     def mask_window(self, window):
@@ -237,7 +242,7 @@ class Dataset(object):
         # masks = []
         mouth_x1 = int(0.08 * self.img_size)
         mouth_x2 = int(0.92 * self.img_size)
-        mouth_y1 = int(0.64 * self.img_size)
+        mouth_y1 = int(0.5 * self.img_size)
         mouth_y2 = int(0.95 * self.img_size)
         mask = np.zeros((1, self.img_size, self.img_size))
         mask[:, mouth_y1:mouth_y2, mouth_x1:mouth_x2] = 1.
@@ -424,6 +429,8 @@ class SyncnetDataset(Dataset):
             if not all_read:
                 idx += 1
                 continue
+
+            # window: [(H, W, 3), ...]
 
             orig_mel = self.orig_mels[vidname]
             mel = self.crop_audio_window(orig_mel, img_name)

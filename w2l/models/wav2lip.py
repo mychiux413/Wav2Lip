@@ -132,20 +132,43 @@ class Wav2Lip(nn.Module):
                                           nn.Sigmoid())
         self.landmarks_decoder = nn.Sequential(
             nn.Linear(1024, 512),
+            nn.Dropout(0.2, inplace=True),
             nn.Linear(512, len(hp.landmarks_points) * 2),
         )
 
     def forward(self, audio_sequences, face_sequences):
+
+        # from uuid import uuid4
+        # import os
+        # import cv2
+        # import numpy as np
+        # B = face_sequences.size(0)
+        # dump = (face_sequences.reshape((B, 6, 6, face_sequences.size(3), 192)) * 255.).detach().cpu().numpy().astype(np.uint8)
+        # hex = uuid4().hex
+        # for b in range(B):
+        #     for t in range(6):
+        #         img = dump[b, :3, t]  # (3, H, W)
+        #         img = img.transpose((1, 2, 0))
+        #         filename = os.path.join('/hdd/checkpoints/w2l/temp', f'{hex}_real_{b}-{t}.jpg')
+        #         cv2.imwrite(filename, img)
+
+        #         img = dump[b, 3:, t]  # (3, H, W)
+        #         img = img.transpose((1, 2, 0))
+        #         filename = os.path.join('/hdd/checkpoints/w2l/temp', f'{hex}_fake_{b}-{t}.jpg')
+        #         cv2.imwrite(filename, img)
+
         # face_sequences: (B, 6, T, H, W)
         # audio_sequences: (B, T, 1, 80, 16)
         B = audio_sequences.size(0)
 
         input_dim_size = len(face_sequences.size())
         if input_dim_size > 4:
-            audio_sequences = torch.cat(
-                [audio_sequences[:, i] for i in range(audio_sequences.size(1))], dim=0)
-            face_sequences = torch.cat(
-                [face_sequences[:, :, i] for i in range(face_sequences.size(2))], dim=0)
+            face_sequences = face_sequences.transpose(1, 2)
+
+            audio_sequences = audio_sequences.reshape((B * hp.syncnet_T, 1, 80, 16))
+            face_sequences = face_sequences.reshape((B * hp.syncnet_T, 6, hp.img_size, hp.img_size))
+
+        # print("audio_sequences", audio_sequences.shape, "face_sequences", face_sequences.shape)
 
         # face_sequences: (B x T, 6, H, W)
         audio_embedding = self.audio_encoder(
@@ -185,13 +208,13 @@ class Wav2Lip(nn.Module):
         x = self.output_block(x)
 
         if input_dim_size > 4:
-            x = torch.split(x, B, dim=0)  # [(B, C, H, W)]
-            outputs = torch.stack(x, dim=2)  # (B, C, T, H, W)
+            x = x.reshape((B, hp.syncnet_T, 3, hp.img_size, hp.img_size))
+            outputs = x.transpose(1, 2)  # (B, C, T, H, W)
 
         else:
             outputs = x
 
-        return outputs, landmarks  # (BxT, 3, img_size, img_size)
+        return outputs, landmarks  # (B, 3, T, img_size, img_size), (B, T, 14, 2)
 
 
 class Wav2Lip_disc_qual(nn.Module):
@@ -299,9 +322,29 @@ class Wav2Lip_disc_qual(nn.Module):
     #     return face_sequences[:, :, face_sequences.size(2)//2:]
 
     def to_2d(self, face_sequences):
+        # face_sequences: (B, 3, T, H, W)
+
+        B = face_sequences.size(0)
+
+        # from uuid import uuid4
+        # import os
+        # import cv2
+        # import numpy as np
         # B = face_sequences.size(0)
-        face_sequences = torch.cat([face_sequences[:, :, i]
-                                   for i in range(face_sequences.size(2))], dim=0)
+        # dump = (face_sequences.reshape((B, 3, 6, face_sequences.size(3), 192)) * 255.).detach().cpu().numpy().astype(np.uint8)
+        # hex = uuid4().hex
+        # for b in range(B):
+        #     for t in range(6):
+        #         img = dump[b, :, t]  # (3, H, W)
+        #         img = img.transpose((1, 2, 0))
+        #         filename = os.path.join('/hdd/checkpoints/w2l/temp', f'{hex}_{b}-{t}.jpg')
+        #         cv2.imwrite(filename, img)
+
+        # (B, T, 3, H, W)
+        face_sequences = face_sequences.transpose(1, 2)
+
+        # (B x T, 3, H, W)
+        face_sequences = face_sequences.reshape((B * hp.syncnet_T, 3, face_sequences.size(3), hp.img_size))
         return face_sequences
 
     def forward_(self, half_face_sequences):

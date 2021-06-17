@@ -61,7 +61,8 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
-        running_loss = 0.
+        running_loss, running_fake_loss, running_real_loss = 0., 0., 0.
+        
         prog_bar = tqdm(enumerate(train_data_loader))
         for step, (x, mel) in prog_bar:
             # x: B x 3 x 2T x H x W
@@ -104,6 +105,8 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             global_step += 1
             # cur_session_steps = global_step - resumed_step
             running_loss += loss.detach()
+            running_fake_loss += loss_false.detach()
+            running_real_loss += loss_true.detach()
 
             if global_step == 1 or global_step % checkpoint_interval == 0:
                 save_checkpoint(
@@ -119,11 +122,17 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             if global_step % K == 0:
                 next_step = step + 1
 
-                delay_loss = running_loss.item() * K / next_step
-                prog_bar.set_description('Loss: {}'.format(delay_loss))
+                _loss = running_loss.item() * K / next_step
+                _real = running_real_loss.item() / next_step
+                _fake = running_fake_loss.item() / next_step
+                prog_bar.set_description('Fake: {}, Real: {}, Loss: {}'.format(_fake, _real, _loss))
                 if summary_writer is not None:
                     summary_writer.add_scalar(
-                        'Loss/Train', delay_loss, global_step)
+                        'Train/Loss', _loss, global_step)
+                    summary_writer.add_scalar(
+                        'Train/Fake', _fake, global_step)
+                    summary_writer.add_scalar(
+                        'Train/Real', _real, global_step)
 
         global_epoch += 1
 
@@ -132,7 +141,7 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir,
                summary_writer=None):
     eval_steps = 1400
     print('Evaluating for {} steps'.format(eval_steps))
-    losses = []
+    losses, real_losses, fake_losses = [], [], []
     half_img_size = hparams.img_size // 2
     while 1:
         for step, (x, mel) in enumerate(test_data_loader):
@@ -169,17 +178,29 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir,
             # y = y.to(device)
 
             # loss = cosine_loss(a, v, y)
-            losses.append((loss_true.detach() + loss_false.detach()) / 2.)
+            _t = loss_true.detach()
+            _f = loss_false.detach()
+            losses.append((_t + _f) / 2.)
+            real_losses.append(_t)
+            fake_losses.append(_f)
 
             if step > eval_steps:
                 break
 
-        losses = [l.item() for l in losses]
-        averaged_loss = sum(losses) / len(losses)
-        print(averaged_loss)
+        _losses = [loss.item() for loss in losses]
+        _real_losses = [loss.item() for loss in real_losses]
+        _fake_losses = [loss.item() for loss in fake_losses]
+        _loss = np.mean(_losses)
+        _real = np.mean(_real_losses)
+        _fake = np.mean(_fake_losses)
+        print('Evaluation | Fake: {}, Real: {}, Loss: {}'.format(_fake, _real, _loss))
         if summary_writer is not None:
             summary_writer.add_scalar(
-                'Loss/Evaluation', averaged_loss, global_step)
+                'Evaluation/Loss', _loss, global_step)
+            summary_writer.add_scalar(
+                'Evaluation/Real', _real, global_step)
+            summary_writer.add_scalar(
+                'Evaluation/Fake', _fake, global_step)
 
         return
 

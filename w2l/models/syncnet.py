@@ -1,5 +1,6 @@
 from torch import nn, Tensor
 from torch.nn import functional as F
+import torch
 
 from w2l.models.conv import Conv2d
 from w2l.hparams import hparams as hp
@@ -66,6 +67,21 @@ class SyncNet_color(nn.Module):
     def forward(self, audio_sequences, face_sequences):
         # face_sequences: (B, 3 x T, H // 2, W)
         # audio_sequences: (B, 1, 80, 16)
+
+        # from uuid import uuid4
+        # import os
+        # import cv2
+        # import numpy as np
+        # B = face_sequences.size(0)
+        # dump = (face_sequences.reshape((B, 3, 6, 96, 192)) * 255.).detach().cpu().numpy().astype(np.uint8)
+        # hex = uuid4().hex
+        # for b in range(B):
+        #     for t in range(6):
+        #         img = dump[b, :, t]  # (3, H, W)
+        #         img = img.transpose((1, 2, 0))
+        #         filename = os.path.join('/hdd/checkpoints/w2l/temp', f'{hex}_{b}-{t}.jpg')
+        #         cv2.imwrite(filename, img)
+
         face_embedding = self.face_encoder(face_sequences)
         audio_embedding = self.audio_encoder(audio_sequences)
 

@@ -14,6 +14,7 @@ class HParams:
             self.data[key] = value
 
         self.overwirte_with_env()
+        self.set_hparam('half_img_size', self.img_size // 2)
 
     def __getattr__(self, key):
         if key not in self.data:
@@ -115,6 +116,7 @@ hparams = HParams(
 
     ###################### Our training parameters #################################
     img_size=192,  # 96 or 192
+    half_img_size=96,
     fps=30,
 
     batch_size=4,
