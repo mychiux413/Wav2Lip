@@ -435,6 +435,8 @@ class SyncnetDataset(Dataset):
             orig_mel = self.orig_mels[vidname]
             mel = self.crop_audio_window(orig_mel, img_name)
 
+            # dump_as_video(window_fnames, vidname, self.get_frame_id(img_name), orig_mel)
+
             if (mel.shape[0] != self.syncnet_mel_step_size):
                 idx += 1
                 continue
@@ -448,3 +450,20 @@ class SyncnetDataset(Dataset):
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
 
             return x, mel
+
+
+# def dump_as_video(window_fnames, vidname, start_frame_num, spec):
+#     from pydub import AudioSegment
+#     start_idx = int(80. * (start_frame_num / float(hparams.fps)))
+#     end_idx = start_idx + hparams.syncnet_mel_step_size
+#     spec_len = len(spec)
+#     print("window_fnames", window_fnames)
+#     print("vidname", vidname)
+#     audio_path = os.path.join(vidname, "audio.ogg")
+#     sound = AudioSegment.from_file(audio_path)
+#     sound_len = len(sound)
+#     chunk_start = int(sound_len * start_idx / spec_len)
+#     chunk_end = int(sound_len * end_idx / spec_len)
+#     chunk = sound[chunk_start:chunk_end]
+#     chunk.export('')
+    

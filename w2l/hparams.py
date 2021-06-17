@@ -123,7 +123,7 @@ hparams = HParams(
     initial_learning_rate=0.001,
     learning_rate_decay_rate=0.9,
     min_learning_rate=1e-6,
-    opt_amsgrad=True,
+    opt_amsgrad=False,
     opt_weight_decay=0.0,
     # ctrl + c, stop whenever eval loss is consistently greater than train loss for ~10 epochs
     nepochs=200000000000000000,
@@ -151,14 +151,14 @@ hparams = HParams(
     syncnet_checkpoint_interval=20000,
     syncnet_T=6,
     syncnet_mel_step_size=16,
-    syncnet_opt_amsgrad=True,
+    syncnet_opt_amsgrad=False,
     syncnet_opt_weight_decay=0.0,
 
     disc_wt=0.07,
     disc_initial_learning_rate=5e-5,
     disc_learning_rate_decay_rate=0.9,
     disc_min_learning_rate=1e-6,
-    disc_opt_amsgrad=True,
+    disc_opt_amsgrad=False,
     disc_opt_weight_decay=0.0,
 
     l1_wt=0.5,
