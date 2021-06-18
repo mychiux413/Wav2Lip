@@ -181,7 +181,7 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir,
             # loss = cosine_loss(a, v, y)
             _t = loss_true.detach()
             _f = loss_false.detach()
-            losses.append((_t + _f) / 2.)
+            losses.append(_t * 0.625 + _f * 0.375)
             real_losses.append(_t)
             fake_losses.append(_f)
 
