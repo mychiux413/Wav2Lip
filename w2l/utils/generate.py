@@ -58,6 +58,27 @@ def to_mels(audio_path, fps, num_mels=80, mel_step_size=16, sample_rate=16000):
     return mel_chunks
 
 
+def dump_face(face_sequences, dump_dir):
+    from uuid import uuid4
+    import os
+    import cv2
+    import numpy as np
+
+    print("inference dump face into:", dump_dir)
+
+    B = face_sequences.size(0)
+    face_sequences = face_sequences.permute((0, 2, 3, 1))
+    real = face_sequences[:, :, :, :3]
+    reference = face_sequences[:, :, :, 3:]
+    dump = torch.cat([reference, real], dim=2)
+    dump = (dump * 255.).detach().cpu().numpy().astype(np.uint8)
+    hex = uuid4().hex
+    for b in range(B):
+        img = dump[b]  # (H, W, 3)
+        filename = os.path.join(dump_dir, f'inference_{hex}_{b}.jpg')
+        cv2.imwrite(filename, img)
+
+
 def datagen(config_path, mels, batch_size=128, start_frame=0):
     stream = FaceConfigStream(config_path, mels, start_frame)
     stream_loader = data_utils.DataLoader(
@@ -67,14 +88,18 @@ def datagen(config_path, mels, batch_size=128, start_frame=0):
         img_masked = img_batch.clone()
         for j, (x1, x2, y1, y2) in enumerate(mouth_batch):
             img_masked[j, y1:y2, x1:x2] = 0
-            mouth_passer = np.zeros((hparams.img_size, hparams.img_size, 1), dtype=np.uint8)
-            mouth_passer[y1:y2, x1:x2] = 1
-            img_batch[j] *= mouth_passer
+            # mouth_passer = torch.zeros([hparams.img_size, hparams.img_size, 1], dtype=torch.float32)
+            # mouth_passer[y1:y2, x1:x2] = 1
+            # img_batch[j] *= mouth_passer
 
         img_batch = torch.cat((img_masked, img_batch), axis=3) / 255.
+        img_batch = img_batch.permute((0, 3, 1, 2))
         mel_batch = torch.reshape(
-            mel_batch, [len(mel_batch), mel_batch.shape[1], mel_batch.shape[2], 1])
+            mel_batch, [mel_batch.size(0), 1, hparams.num_mels, hparams.syncnet_mel_step_size])
 
+        # img_batch: (B, 6, H, W)
+        # mel_batch: (B, 1, 80, 16)
+        # coords_batch: (B, 4)
         yield img_batch, mel_batch, frame_batch, coords_batch
 
 
@@ -135,10 +160,11 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
                 'temp/result.avi',
                 cv2.VideoWriter_fourcc(*'FFV1'), face_fps, (frame_w, frame_h))
 
-        img_batch = img_batch.permute((0, 3, 1, 2)).to(device)
-        mel_batch = mel_batch.permute((0, 3, 1, 2)).to(device)
+        img_batch = img_batch.to(device)
+        mel_batch = mel_batch.to(device)
 
         with torch.no_grad():
+            # dump_face(img_batch, '/hdd/checkpoints/w2l/temp')
             pred, _ = model(mel_batch, img_batch)
 
         pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.

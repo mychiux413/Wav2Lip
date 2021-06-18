@@ -140,9 +140,11 @@ hparams = HParams(
     mobilefacenet_model_path='checkpoints/mobilefacenet_model_best.pth.tar',
     expand_mouth_width_ratio=0.6,
     expand_mouth_height_ratio=0.7,
+    x1_mouth_mask_edge=0.25,
+    x2_mouth_mask_edge=0.75,
 
     # is initially zero, will be set automatically to 0.03 later. Leads to faster convergence.
-    syncnet_wt=0.07,
+    syncnet_wt=0.03,
     syncnet_batch_size=128,
     syncnet_lr=1e-4,
     syncnet_lr_decay_rate=0.995,
@@ -163,7 +165,7 @@ hparams = HParams(
 
     l1_wt=0.5,
     ssim_wt=0.5,
-    landmarks_wt=4.0,
+    landmarks_wt=0.0,
     landmarks_points=[2, 5, 8, 11, 14, 31, 33, 35, 48, 51, 54, 57, 62, 66],
 )
 

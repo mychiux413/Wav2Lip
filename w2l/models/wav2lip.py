@@ -136,39 +136,54 @@ class Wav2Lip(nn.Module):
             nn.Linear(512, len(hp.landmarks_points) * 2),
         )
 
+    def dump_face(self, face_sequences, dump_dir):
+        from uuid import uuid4
+        import os
+        import cv2
+        import numpy as np
+
+        print("wav2lip dump faces to dir:", dump_dir)
+        B = face_sequences.size(0)
+        input_dim_size = len(face_sequences.size())
+        if input_dim_size > 4:
+            dump = (face_sequences.reshape((B, hp.syncnet_T, 6, hp.img_size, hp.img_size)) * 255.).detach().cpu().numpy().astype(np.uint8)
+        else:
+            dump = (face_sequences.reshape((B, 6, hp.img_size, hp.img_size)) * 255.).detach().cpu().numpy().astype(np.uint8)
+        hex = uuid4().hex
+        for b in range(B):
+            if input_dim_size > 4:
+                for t in range(6):
+                    img = dump[b, t, :3]  # (3, H, W)
+                    img = img.transpose((1, 2, 0))
+                    filename = os.path.join(dump_dir, f'wav2lip_{hex}_real_{b}-{t}.jpg')
+                    cv2.imwrite(filename, img)
+
+                    img = dump[b, t, 3:]  # (3, H, W)
+                    img = img.transpose((1, 2, 0))
+                    filename = os.path.join(dump_dir, f'wav2lip_{hex}_fake_{b}-{t}.jpg')
+                    cv2.imwrite(filename, img)
+            else:
+                img = dump[b, :3]  # (3, H, W)
+                img = img.transpose((1, 2, 0))
+                filename = os.path.join(dump_dir, f'wav2lip_{hex}_real_{b}.jpg')
+                cv2.imwrite(filename, img)
+
+                img = dump[b, 3:]  # (3, H, W)
+                img = img.transpose((1, 2, 0))
+                filename = os.path.join(dump_dir, f'wav2lip_{hex}_fake_{b}.jpg')
+                cv2.imwrite(filename, img)
+
     def forward(self, audio_sequences, face_sequences):
+        # self.dump_face(face_sequences, "/hdd/checkpoints/w2l/temp")
 
-        # from uuid import uuid4
-        # import os
-        # import cv2
-        # import numpy as np
-        # B = face_sequences.size(0)
-        # dump = (face_sequences.reshape((B, 6, 6, face_sequences.size(3), 192)) * 255.).detach().cpu().numpy().astype(np.uint8)
-        # hex = uuid4().hex
-        # for b in range(B):
-        #     for t in range(6):
-        #         img = dump[b, :3, t]  # (3, H, W)
-        #         img = img.transpose((1, 2, 0))
-        #         filename = os.path.join('/hdd/checkpoints/w2l/temp', f'{hex}_real_{b}-{t}.jpg')
-        #         cv2.imwrite(filename, img)
-
-        #         img = dump[b, 3:, t]  # (3, H, W)
-        #         img = img.transpose((1, 2, 0))
-        #         filename = os.path.join('/hdd/checkpoints/w2l/temp', f'{hex}_fake_{b}-{t}.jpg')
-        #         cv2.imwrite(filename, img)
-
-        # face_sequences: (B, 6, T, H, W)
+        # face_sequences: (B, T, 6, H, W)
         # audio_sequences: (B, T, 1, 80, 16)
         B = audio_sequences.size(0)
 
         input_dim_size = len(face_sequences.size())
         if input_dim_size > 4:
-            face_sequences = face_sequences.transpose(1, 2)
-
-            audio_sequences = audio_sequences.reshape((B * hp.syncnet_T, 1, 80, 16))
+            audio_sequences = audio_sequences.reshape((B * hp.syncnet_T, 1, hp.num_mels, hp.syncnet_mel_step_size))
             face_sequences = face_sequences.reshape((B * hp.syncnet_T, 6, hp.img_size, hp.img_size))
-
-        # print("audio_sequences", audio_sequences.shape, "face_sequences", face_sequences.shape)
 
         # face_sequences: (B x T, 6, H, W)
         audio_embedding = self.audio_encoder(
@@ -209,12 +224,8 @@ class Wav2Lip(nn.Module):
 
         if input_dim_size > 4:
             x = x.reshape((B, hp.syncnet_T, 3, hp.img_size, hp.img_size))
-            outputs = x.transpose(1, 2)  # (B, C, T, H, W)
 
-        else:
-            outputs = x
-
-        return outputs, landmarks  # (B, 3, T, img_size, img_size), (B, T, 14, 2)
+        return x, landmarks  # (B, T, 3, img_size, img_size), (B, T, 14, 2)
 
 
 class Wav2Lip_disc_qual(nn.Module):
@@ -243,7 +254,7 @@ class Wav2Lip_disc_qual(nn.Module):
                     last_face_y_size, 7, 1, 3)
             elif i == 1:
                 sequentials.append(
-                    nn.Sequential(nonorm_Conv2d(input_channels, required_output_channels[i], kernel_size=5, stride=(2, 2), padding=2),
+                    nn.Sequential(nonorm_Conv2d(input_channels, required_output_channels[i], kernel_size=5, stride=(1, 2), padding=2),
                                   nonorm_Conv2d(required_output_channels[i], required_output_channels[i], kernel_size=5, stride=1, padding=2)),)
 
                 last_face_x_size = evaluate_new_size_after_conv(
@@ -321,30 +332,32 @@ class Wav2Lip_disc_qual(nn.Module):
     # def get_lower_half(self, face_sequences):
     #     return face_sequences[:, :, face_sequences.size(2)//2:]
 
+    def dump_faces(self, face_sequences, dump_dir):
+        from uuid import uuid4
+        import os
+        import cv2
+        import numpy as np
+        
+        print("discriminator dump faces to dir", dump_dir)
+        B = face_sequences.size(0)
+        dump = (face_sequences.reshape((B, hp.syncnet_T, 3, hp.half_img_size, hp.img_size)) * 255.).detach().cpu().numpy().astype(np.uint8)
+        hex = uuid4().hex
+        for b in range(B):
+            for t in range(6):
+                img = dump[b, t, :]  # (3, H, W)
+                img = img.transpose((1, 2, 0))
+                filename = os.path.join(dump_dir, f'disc_{hex}_{b}-{t}.jpg')
+                cv2.imwrite(filename, img)
+
     def to_2d(self, face_sequences):
-        # face_sequences: (B, 3, T, H, W)
+        # face_sequences: (B, T, 3, H, W)
+
+        # self.dump_faces(face_sequences, '/hdd/checkpoints/w2l/temp')
 
         B = face_sequences.size(0)
 
-        # from uuid import uuid4
-        # import os
-        # import cv2
-        # import numpy as np
-        # B = face_sequences.size(0)
-        # dump = (face_sequences.reshape((B, 3, 6, face_sequences.size(3), 192)) * 255.).detach().cpu().numpy().astype(np.uint8)
-        # hex = uuid4().hex
-        # for b in range(B):
-        #     for t in range(6):
-        #         img = dump[b, :, t]  # (3, H, W)
-        #         img = img.transpose((1, 2, 0))
-        #         filename = os.path.join('/hdd/checkpoints/w2l/temp', f'{hex}_{b}-{t}.jpg')
-        #         cv2.imwrite(filename, img)
-
-        # (B, T, 3, H, W)
-        face_sequences = face_sequences.transpose(1, 2)
-
         # (B x T, 3, H, W)
-        face_sequences = face_sequences.reshape((B * hp.syncnet_T, 3, face_sequences.size(3), hp.img_size))
+        face_sequences = face_sequences.reshape((B * hp.syncnet_T, 3, hp.half_img_size, hp.img_size))
         return face_sequences
 
     def forward_(self, half_face_sequences):
@@ -385,8 +398,10 @@ class InceptionV3_disc(torchvision.models.Inception3):
 
     def to_2d(self, face_sequences):
         # B = face_sequences.size(0)
-        face_sequences = torch.cat([face_sequences[:, :, i]
-                                   for i in range(hp.syncnet_T)], dim=0)
+        B = face_sequences.size(0)
+
+        # (B x T, 3, H, W)
+        face_sequences = face_sequences.reshape((B * hp.syncnet_T, 3, hp.half_img_size, hp.img_size))
         return face_sequences
 
     def forward_(self, half_face_sequences):

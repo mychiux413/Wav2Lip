@@ -65,20 +65,20 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
         
         prog_bar = tqdm(enumerate(train_data_loader))
         for step, (x, mel) in prog_bar:
-            # x: B x 3 x 2T x H x W
+            # x: B x 2T x 3 x H x W
             B = x.size(0)
             if B == 1:
                 continue
 
-            # x: B x 3 x T x H x W
-            x_true = x[:, :, :hparams.syncnet_T]
+            # x_true B x T x 3 x H x W
+            x_true = x[:, :hparams.syncnet_T, :]
 
-            # x: B x 3 x T x H x W
-            x_false = x[:, :, hparams.syncnet_T:]
+            # x_false: B x T x 3 x H x W
+            x_false = x[:, hparams.syncnet_T:, :]
             x_true = x_true.reshape(
-                (B, 3 * hparams.syncnet_T, half_img_size, hparams.img_size))
+                (B, hparams.syncnet_T * 3, half_img_size, hparams.img_size))
             x_false = x_false.reshape(
-                (B, 3 * hparams.syncnet_T, half_img_size, hparams.img_size))
+                (B, hparams.syncnet_T * 3, half_img_size, hparams.img_size))
 
             y_true = torch.ones((B, 1), dtype=torch.float32, device=device)
             y_false = torch.zeros((B, 1), dtype=torch.float32, device=device)
@@ -95,7 +95,7 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             loss_false = cosine_loss(a, v, y_false)
             # y = y.to(device)
 
-            loss = (loss_true + loss_false) / 2. / K
+            loss = (loss_true * 0.625 + loss_false * 0.375) / K
             loss.backward()
 
             if global_step % K == 0:
@@ -149,12 +149,13 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir,
             if B == 1:
                 continue
 
-            x_true = x[:, :, :hparams.syncnet_T]
-            x_false = x[:, :, hparams.syncnet_T:]
+            # x_true B x T x 3 x H x W
+            x_true = x[:, :hparams.syncnet_T, :]
+            x_false = x[:, hparams.syncnet_T:, :]
             x_true = x_true.reshape(
-                (B, 3 * hparams.syncnet_T, half_img_size, hparams.img_size))
+                (B, hparams.syncnet_T * 3, half_img_size, hparams.img_size))
             x_false = x_false.reshape(
-                (B, 3 * hparams.syncnet_T, half_img_size, hparams.img_size))
+                (B, hparams.syncnet_T * 3, half_img_size, hparams.img_size))
             y_true = torch.ones((B, 1), dtype=torch.float32, device=device)
             y_false = torch.zeros((B, 1), dtype=torch.float32, device=device)
             # x = torch.cat([

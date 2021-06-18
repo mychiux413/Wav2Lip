@@ -95,6 +95,29 @@ class LandMarks(dict):
         return np.load(path, allow_pickle=True).tolist()
 
 
+def cal_mouth_mask_pos(mouth_landmarks, img_height, img_width, x1_mask_edge, x2_mask_edge):
+    # print(49, 0.5 - mouth_landmarks[0, 0], mouth_landmarks[0, 1], 55, mouth_landmarks[6, 0] - 0.5, mouth_landmarks[6, 1])
+    mouth_x1 = min(mouth_landmarks[:, 0]) * img_width
+    mouth_x2 = max(mouth_landmarks[:, 0]) * img_width
+    mouth_y1 = min(mouth_landmarks[:, 1]) * img_height
+    mouth_y2 = max(mouth_landmarks[:, 1]) * img_height
+    mouth_width = mouth_x2 - mouth_x1
+    mouth_height = mouth_y2 - mouth_y1
+    mouth_height = min(40, mouth_height)
+    mouth_x1 = min(x1_mask_edge, int(mouth_x1 - mouth_width *
+                                     hparams.expand_mouth_width_ratio - 5))
+    mouth_x1 = max(mouth_x1, 0)
+    mouth_x2 = max(x2_mask_edge, int(
+        mouth_x2 + mouth_width * hparams.expand_mouth_width_ratio + 5))
+    mouth_x2 = min(mouth_x2, img_width)
+    mouth_y1 = max(img_height // 2, int(mouth_y1 - mouth_height *
+                                        hparams.expand_mouth_height_ratio - 5))
+    mouth_y2 = min(img_height, int(
+        mouth_y2 + mouth_height * hparams.expand_mouth_height_ratio + 5))
+
+    return mouth_x1, mouth_x2, mouth_y1, mouth_y2
+
+
 class Dataset(object):
     valid_sampling_width = hparams.fps + 1
     syncnet_T = hparams.syncnet_T
@@ -134,8 +157,8 @@ class Dataset(object):
 
         self.img_size = hparams.img_size
         self.half_img_size = int(self.img_size / 2)
-        self.x1_mask_edge = int(self.img_size * 0.25)
-        self.x2_mask_edge = int(self.img_size * 0.75)
+        self.x1_mask_edge = int(self.img_size * hparams.x1_mouth_mask_edge)
+        self.x2_mask_edge = int(self.img_size * hparams.x2_mouth_mask_edge)
         self.data_root = data_root
         self.inner_shuffle = inner_shuffle
         self.linear_space = np.array(range(len(self.all_videos)))
@@ -225,10 +248,10 @@ class Dataset(object):
         # (2*T, H, W, 3)
         x = np.asarray(window) / 255.
 
-        # (3, 2*T, H, W)
-        x = np.transpose(x, (3, 0, 1, 2))
+        # (2*T, 3, H, W)
+        x = np.transpose(x, (0, 3, 1, 2))
 
-        # output size: 3 x 2*T x H x W
+        # output size: (2*T, 3, H, W)
         return x
 
     def mask_window(self, window):
@@ -236,43 +259,25 @@ class Dataset(object):
                self.fringe_x1:self.fringe_x2] = 0.
         return window
 
-    def mask_mouth(self, window, wrong_window, vidname, window_fnames):
+    def mask_mouth(self, window, vidname, window_fnames):
         fnames = list(map(os.path.basename, window_fnames))
-        landmarks = [self.landmarks[vidname][fname][hparams.landmarks_points] for fname in fnames]
+        landmarks = [self.landmarks[vidname][fname] for fname in fnames]
         # masks = []
-        mouth_x1 = int(0.08 * self.img_size)
-        mouth_x2 = int(0.92 * self.img_size)
-        mouth_y1 = int(0.5 * self.img_size)
-        mouth_y2 = int(0.95 * self.img_size)
-        mask = np.zeros((1, self.img_size, self.img_size))
-        mask[:, mouth_y1:mouth_y2, mouth_x1:mouth_x2] = 1.
-        # for i, landmark in enumerate(landmarks):
-        for i in range(len(fnames)):
-            # mouth_landmark = landmark[49:]
-            # mouth_x1 = min(mouth_landmark[:, 0]) * self.img_size
-            # mouth_x2 = max(mouth_landmark[:, 0]) * self.img_size
-            # mouth_y1 = min(mouth_landmark[:, 1]) * self.img_size
-            # mouth_y2 = max(mouth_landmark[:, 1]) * self.img_size
-            # mouth_width = mouth_x2 - mouth_x1
-            # mouth_height = mouth_y2 - mouth_y1
-            # mouth_x1 = max(0, int(mouth_x1 - mouth_width *
-            #                hparams.expand_mouth_width_ratio - 5))
-            # mouth_x1 = min(mouth_x1, self.x1_mask_edge)
-            # mouth_x2 = min(self.img_size, int(
-            #     mouth_x2 + mouth_width * hparams.expand_mouth_width_ratio + 5))
-            # mouth_x2 = max(mouth_x2, self.x2_mask_edge)
-            # mouth_y1 = int(mouth_y1 - mouth_height * hparams.expand_mouth_height_ratio - 5)
-            # mouth_y2 = min(self.img_size, int(
-            #     mouth_y2 + mouth_height * hparams.expand_mouth_height_ratio + 5))
-            # mask = np.zeros((1, self.img_size, self.img_size))
-            # mask[:, mouth_y1:mouth_y2, mouth_x1:mouth_x2] = 1.
-            # masks.append(mask)
-            if wrong_window is not None:
-                wrong_window[:, i, :, :] *= mask
+        for i, landmark in enumerate(landmarks):
+            mouth_landmark = landmark[48:]
+            mouth_x1, mouth_x2, mouth_y1, mouth_y2 = cal_mouth_mask_pos(
+                mouth_landmark,
+                self.img_size,
+                self.img_size,
+                self.x1_mask_edge,
+                self.x2_mask_edge)
 
             if window is not None:
-                window[:, i, mouth_y1:mouth_y2, mouth_x1:mouth_x2] = 0.
-        return window, wrong_window, landmarks
+                window[i, :, mouth_y1:mouth_y2, mouth_x1:mouth_x2] = 0.
+
+        target_landmarks = [landmark[hparams.landmarks_points]
+                            for landmark in landmarks]
+        return window, target_landmarks
 
     def __len__(self):
         return self.data_len
@@ -338,30 +343,30 @@ class Wav2LipDataset(Dataset):
                 idx += 1
                 continue
 
-            window = self.prepare_window(window)  # 3 x T x H x W
+            window = self.prepare_window(window)  # T x 3 x H x W
             y = torch.FloatTensor(window)
-            wrong_window = self.prepare_window(wrong_window)  # 3 x T x H x W
+            wrong_window = self.prepare_window(wrong_window)  # T x 3 x H x W
 
-            cat = np.concatenate([window, wrong_window, y], axis=1)
+            cat = np.concatenate([window, wrong_window, y], axis=0)
             cat = torch.FloatTensor(cat)
             if self.img_augment:
-                cat = cat.permute((1, 0, 2, 3))
                 cat = self.augment_window(cat)
-                cat = cat.permute((1, 0, 2, 3))
 
-            window = cat[:, :self.syncnet_T, :, :]
-            wrong_window = cat[:, self.syncnet_T:(self.syncnet_T * 2), :, :]
-            y = cat[:, (self.syncnet_T * 2):, :, :]
+            window = cat[:self.syncnet_T, :, :, :]
+            wrong_window = cat[self.syncnet_T:(self.syncnet_T * 2):, :, :]
+            y = cat[(self.syncnet_T * 2):, :, :, :]
 
-            window, _, landmarks = self.mask_mouth(
-                window, None, vidname, window_fnames)
+            window, landmarks = self.mask_mouth(
+                window, vidname, window_fnames)
 
-            x = torch.cat([window, wrong_window], axis=0)
+            x = torch.cat([window, wrong_window], axis=1)
 
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
             indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)
             landmarks = torch.FloatTensor(landmarks)
 
+            # x: (T, 6, H, W)
+            # y: (T, 3, H, W)
             # indiv_mels: (T, 1, 80, 16)
             # mel: (1, 80, 16)
             return x, indiv_mels, mel, y, landmarks
@@ -441,12 +446,10 @@ class SyncnetDataset(Dataset):
                 idx += 1
                 continue
 
-            x = self.prepare_window(window)  # 3 x 2T x H x W
+            x = self.prepare_window(window)  # (2T, 3, H, W)
             x = torch.FloatTensor(x)
             if self.img_augment:
-                x = x.permute((1, 0, 2, 3))  # 2T x 3 x H x W
                 x = self.augment_window(x)
-                x = x.permute((1, 0, 2, 3))  # 3 x 2T x H x W
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
 
             return x, mel
@@ -466,4 +469,3 @@ class SyncnetDataset(Dataset):
 #     chunk_end = int(sound_len * end_idx / spec_len)
 #     chunk = sound[chunk_start:chunk_end]
 #     chunk.export('')
-    
