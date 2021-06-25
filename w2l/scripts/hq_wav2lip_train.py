@@ -146,8 +146,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                    hparams.min_learning_rate) / hparams.warm_up_epochs
         C_disc = np.log(hparams.disc_initial_learning_rate /
                         hparams.disc_min_learning_rate) / hparams.warm_up_epochs
-        C_sync = np.log(hparams.syncnet_lr /
-                        hparams.syncnet_min_lr) / hparams.warm_up_epochs
+        # C_sync = np.log(hparams.syncnet_lr /
+        #                 hparams.syncnet_min_lr) / hparams.warm_up_epochs
 
     print("WarmUp Epochs:", hparams.warm_up_epochs)
     while global_epoch < nepochs:
@@ -156,8 +156,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             lr = hparams.min_learning_rate * np.exp(C * global_epoch)
             disc_lr = hparams.disc_min_learning_rate * \
                 np.exp(C_disc * global_epoch)
-            sync_lr = hparams.syncnet_min_lr * \
-                np.exp(C_sync * global_epoch)
+            # sync_lr = hparams.syncnet_min_lr * \
+            #     np.exp(C_sync * global_epoch)
         else:
             lr = hparams.initial_learning_rate * \
                 (hparams.learning_rate_decay_rate **
@@ -169,22 +169,22 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                  (global_epoch - hparams.warm_up_epochs))
             disc_lr = max(hparams.disc_min_learning_rate, disc_lr)
 
-            sync_lr = hparams.syncnet_lr * \
-                (hparams.syncnet_lr_decay_rate **
-                 (global_epoch - hparams.warm_up_epochs))
-            sync_lr = max(hparams.syncnet_min_lr, sync_lr)
+            # sync_lr = hparams.syncnet_lr * \
+            #     (hparams.syncnet_lr_decay_rate **
+            #      (global_epoch - hparams.warm_up_epochs))
+            # sync_lr = max(hparams.syncnet_min_lr, sync_lr)
         print("epoch: {}, lr: {}, disc_lr: {}, sync_lr: {}".format(
-            global_epoch, lr, disc_lr, sync_lr))
+            global_epoch, lr, disc_lr, None))
         if summary_writer is not None:
             summary_writer.add_scalar("Train/Wav2Lip-LR", lr, global_step)
             summary_writer.add_scalar("Train/Disc-LR", disc_lr, global_step)
-            summary_writer.add_scalar("Train/Sync-LR", sync_lr, global_step)
+            # summary_writer.add_scalar("Train/Sync-LR", sync_lr, global_step)
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
         for param_group in disc_optimizer.param_groups:
             param_group['lr'] = disc_lr
-        for param_group in syncnet_optimizer.param_groups:
-            param_group['lr'] = sync_lr
+        # for param_group in syncnet_optimizer.param_groups:
+        #     param_group['lr'] = sync_lr
 
         running_sync_loss, running_perceptual_loss = 0., 0.
         running_disc_real_loss, running_disc_fake_loss, running_target_loss = 0., 0., 0.
@@ -199,7 +199,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                 continue
             disc.train()
             model.train()
-            syncnet.train()
+            syncnet.eval()
 
             x = x.to(device)
             mel = mel.to(device)
@@ -269,7 +269,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                 syncnet, mel, half_g.detach(), expect_true=False)
 
             sync_train_loss = (sync_real_loss + sync_fake_loss) / K / 2.
-            sync_train_loss.backward()
+            # sync_train_loss.backward()
 
             if global_step % K == 0:
                 torch.nn.utils.clip_grad_norm_(
@@ -277,10 +277,10 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                 disc_optimizer.step()
                 disc_optimizer.zero_grad()
 
-                torch.nn.utils.clip_grad_norm_(
-                    syncnet.parameters(), 1.0, norm_type=2.0)
-                syncnet_optimizer.step()
-                syncnet_optimizer.zero_grad()
+                # torch.nn.utils.clip_grad_norm_(
+                #     syncnet.parameters(), 1.0, norm_type=2.0)
+                # syncnet_optimizer.step()
+                # syncnet_optimizer.zero_grad()
 
             if global_step % checkpoint_interval == 0:
                 save_sample_images(x, g, gt, global_step,
@@ -312,8 +312,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                     model, optimizer, global_step, checkpoint_dir, global_epoch)
                 save_checkpoint(disc, disc_optimizer, global_step,
                                 checkpoint_dir, global_epoch, prefix='disc_')
-                save_checkpoint(syncnet, syncnet_optimizer, global_step,
-                                checkpoint_dir, global_epoch, prefix='sync_')
+                # save_checkpoint(syncnet, syncnet_optimizer, global_step,
+                #                 checkpoint_dir, global_epoch, prefix='sync_')
 
             if global_step % hparams.eval_interval == 0:
                 with torch.no_grad():
@@ -348,7 +348,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                     print("discriminator is not trustable, set weight to 0.")
                     hparams.set_hparam('disc_wt', 0.001)
 
-                if _sync_train < 0.7 and _sync < 1.0:
+                if _sync_real < 0.4 and _sync < 1.0:
                     if hparams.syncnet_wt != origin_syncnet_wt:
                         print(
                             "syncnet is trustable now, set it back to:", origin_syncnet_wt)

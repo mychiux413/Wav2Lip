@@ -31,7 +31,7 @@ def load_model(path):
     new_s = {}
     for k, v in s.items():
         new_s[k.replace('module.', '')] = v
-    model.load_state_dict(new_s)
+    model.load_state_dict(new_s, strict=False)
 
     model = model.to(device)
     return model.eval()

@@ -20,7 +20,6 @@ class GDC(nn.Module):
         # BxT, channels, 1, 1
         x = self.conv_6_flatten(x)
         x = self.linear(x)
-        # BxT, 76
         x = self.bn(x)
         return x
 

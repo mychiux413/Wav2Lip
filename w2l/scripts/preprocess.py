@@ -1,4 +1,7 @@
+from functools import partial
 import sys
+
+from numpy.core.defchararray import endswith
 
 if sys.version_info[0] < 3 and sys.version_info[1] < 2:
     raise Exception("Must be using >= Python 3.2")
@@ -20,6 +23,8 @@ from w2l.utils.env import device
 from w2l.utils.loss import cal_blur
 import torch
 from multiprocessing import Pool
+from pydub import AudioSegment
+from shutil import move, rmtree
 
 
 def process_video_file(fa, vfile, args):
@@ -180,6 +185,87 @@ def mp_handler(job):
         traceback.print_exc()
 
 
+def jpg_to_int(filename):
+    return int(filename.rstrip('.jpg'))
+
+
+def move_jpg(from_dir, filename, to_dir, new_filename):
+    from_path = os.path.join(from_dir, filename)
+    to_path = os.path.join(to_dir, new_filename)
+    move(from_path, to_path)
+
+
+def split_dir(dirpath, max_seconds=20.0):
+    if dirpath.endswith('/'):
+        dirpath = dirpath[:-1]
+    if not os.path.exists(dirpath):
+        print("dirpath not exists: {}".format(dirpath))
+        return
+    audio_path = os.path.join(dirpath, 'audio.ogg')
+    if not os.path.exists(audio_path):
+        print("missing audio: {}".format(audio_path))
+        return
+    audio = AudioSegment.from_file(audio_path)
+    audio_len = len(audio)
+    n_split = np.math.ceil(audio.duration_seconds / max_seconds)
+    if n_split < 2:
+        return
+
+    jpgs = list(filter(lambda path: path.endswith('.jpg'), os.listdir(dirpath)))
+    blur_path = os.path.join(dirpath, 'blur.npy')
+    landmarks_path = os.path.join(dirpath, 'landmarks.npy')
+    blur = None
+    landmarks = None
+    if os.path.exists(blur_path):
+        blur = np.load(blur_path, allow_pickle=True).tolist()
+    if os.path.exists(landmarks_path):
+        landmarks = np.load(landmarks_path, allow_pickle=True).tolist()
+    for i in range(n_split):
+        subdirpath = '{}___{}'.format(dirpath, i)
+        if os.path.exists(subdirpath):
+            print('redo subdir:', subdirpath)
+            rmtree(subdirpath)
+
+        sub_min_frames = int(i * max_seconds * hp.fps)
+        sub_max_frames = int((i + 1) * max_seconds * hp.fps)
+        sub_jpgs = set(filter(lambda jpg: sub_min_frames <=
+                       jpg_to_int(jpg) < sub_max_frames, jpgs))
+        if len(sub_jpgs) < int(3 * hp.fps):
+            print("skip short split: {}".format(len(sub_jpgs)))
+            continue
+        print("create subdir: ", subdirpath)
+        os.makedirs(subdirpath, exist_ok=True)
+        sub_jpgs_map = {}
+        for jpg in sub_jpgs:
+            current_frame = jpg_to_int(jpg)
+            new_jpg = '{}.jpg'.format(current_frame - sub_min_frames)
+            sub_jpgs_map[jpg] = new_jpg
+        for jpg in sub_jpgs:
+            current_frame = jpg_to_int(jpg)
+            move_jpg(dirpath, jpg, subdirpath, sub_jpgs_map[jpg])
+        if blur is not None:
+            sub_blur = {}
+            for from_jpg, to_jpg in sub_jpgs_map.items():
+                if from_jpg in blur:
+                    sub_blur[to_jpg] = blur[from_jpg]
+            sub_blur_path = os.path.join(subdirpath, 'blur.npy')
+            np.save(sub_blur_path, sub_blur, allow_pickle=True)
+        if landmarks is not None:
+            sub_landmarks = {}
+            for from_jpg, to_jpg in sub_jpgs_map.items():
+                if from_jpg in landmarks:
+                    sub_landmarks[to_jpg] = landmarks[from_jpg]
+            sub_landmarks_path = os.path.join(subdirpath, 'landmarks.npy')
+            np.save(sub_landmarks_path, sub_landmarks, allow_pickle=True)
+        start_audio_index = int((i * max_seconds) * 1000)
+        end_audio_index = min(audio_len, int((i + 1) * max_seconds * 1000))
+        sub_audio = audio[start_audio_index:end_audio_index]
+        sub_audio.export(os.path.join(subdirpath, 'audio.ogg'), format='ogg')
+
+    print("remove dir", dirpath)
+    rmtree(dirpath)
+
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -199,6 +285,8 @@ def main():
         '--excludes', help='exclude dirs with comma separated', default=None, type=str)
     parser.add_argument(
         '--includes', help='include dirs with comma separated', default=None, type=str)
+    parser.add_argument(
+        '--max_video_duration_seconds', help='to split every video length under the specified value', default=20.0, type=float)
 
     args = parser.parse_args()
 
@@ -215,14 +303,16 @@ def main():
     exclude_dirs = tuple()
     if args.excludes is not None:
         excludes = args.excludes.split(',')
-        exclude_dirs = tuple(set([os.path.join(args.data_root, ex) for ex in excludes]))
+        exclude_dirs = tuple(
+            set([os.path.join(args.data_root, ex) for ex in excludes]))
     if args.limit > 0:
         print("limit dump files to:", args.limit)
         np.random.seed(1234)
         filelist = np.random.choice(filelist, size=args.limit, replace=False)
     if args.includes is not None:
         includes = args.includes.split(',')
-        include_dirs = tuple(set([os.path.join(args.data_root, inc) for inc in includes]))
+        include_dirs = tuple(
+            set([os.path.join(args.data_root, inc) for inc in includes]))
         include_list = glob(os.path.join(include_dirs, '*/*.mp4'))
         filelist = set(filelist + include_list)
 
@@ -271,6 +361,25 @@ def main():
     with Pool(hp.num_workers) as p:
         for _ in p.imap(process_blur_score, gen(), chunksize=20):
             pass
+
+    finished_dirs = []
+    for datasetname in os.listdir(args.preprocessed_root):
+        if args.excludes is not None:
+            if datasetname in excludes:
+                print("skip to split exclude dir:", datasetname)
+                continue
+        dirpath = os.path.join(args.preprocessed_root, datasetname)
+        if not os.path.isdir(dirpath):
+            continue
+        for vidname in os.listdir(dirpath):
+            if '___' in vidname:
+                continue
+            vid_dir = os.path.join(dirpath, vidname)
+            finished_dirs.append(vid_dir)
+
+    split_func = partial(split_dir, max_seconds=args.max_video_duration_seconds)
+    with Pool(hp.num_workers) as p:
+        p.map(split_func, finished_dirs)
 
 
 if __name__ == '__main__':

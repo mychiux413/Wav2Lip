@@ -15,6 +15,7 @@ import cv2
 from PIL import Image
 from multiprocessing import Pool
 from time import time
+import pandas as pd
 
 
 class SyncnetDataset(Dataset):
@@ -120,7 +121,7 @@ class SyncnetDataset(Dataset):
                 idx += 1
                 continue
 
-            x = self.prepare_window(window)  # 3 x 2T x H x W
+            x = self.prepare_window(window)  # (2T, 3, H, W)
             x = torch.FloatTensor(x)
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
             return x, mel, os.path.relpath(vidname, self.data_root)
@@ -197,12 +198,12 @@ def evaluate_datasets_losses(syncnet_checkpoint_path, data_root, epochs=5, only_
 
                 x = x.to(device)
                 mel = mel.to(device)
-                x_true = x[:, :, :hp.syncnet_T]
-                x_false = x[:, :, hp.syncnet_T:]
+                x_true = x[:, :hp.syncnet_T, :]
+                x_false = x[:, hp.syncnet_T:, :]
                 x_true = x_true.reshape(
-                    (B, 3 * hp.syncnet_T, half_img_size, hp.img_size))
+                    (B, hp.syncnet_T * 3, half_img_size, hp.img_size))
                 x_false = x_false.reshape(
-                    (B, 3 * hp.syncnet_T, half_img_size, hp.img_size))
+                    (B, hp.syncnet_T * 3, half_img_size, hp.img_size))
 
                 y_true = torch.ones((B, 1), dtype=torch.float32, device=device)
                 y_false = torch.zeros((B, 1), dtype=torch.float32, device=device)
@@ -216,9 +217,12 @@ def evaluate_datasets_losses(syncnet_checkpoint_path, data_root, epochs=5, only_
 
                 loss = loss_true
                 if not only_true_image:
-                    loss = (loss_true + loss_false) / 2.
+                    loss = (loss_true * 0.5 + loss_false * 0.5)
                 for vidname, l in zip(vidnames, loss):
                     losses[vidname].append(l)
+            print("review losses")
+            print(pd.Series([np.mean(loss) for loss in losses.values()]).describe())
+
     np.save(sync_losses_path, losses, allow_pickle=True)
 
     stat_losses = {}
@@ -253,7 +257,7 @@ def stats_landmarks(path):
     if len(dic) == 0:
         return None, None
     for k, v in dic.items():
-        dic[k] = v[51:, 0:1]  # take lip of x only
+        dic[k] = v[48:, 0:1]  # take lip of x only
     return to_sorted_stats_landmarks(dirname, dic)
 
 

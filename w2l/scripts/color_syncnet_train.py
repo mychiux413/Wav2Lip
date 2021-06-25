@@ -95,7 +95,7 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             loss_false = cosine_loss(a, v, y_false)
             # y = y.to(device)
 
-            loss = (loss_true * 0.625 + loss_false * 0.375) / K
+            loss = (loss_true * 0.5 + loss_false * 0.5) / K
             loss.backward()
 
             if global_step % K == 0:
@@ -181,7 +181,7 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir,
             # loss = cosine_loss(a, v, y)
             _t = loss_true.detach()
             _f = loss_false.detach()
-            losses.append(_t * 0.625 + _f * 0.375)
+            losses.append(_t * 0.5 + _f * 0.5)
             real_losses.append(_t)
             fake_losses.append(_f)
 
