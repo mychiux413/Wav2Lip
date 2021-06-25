@@ -14,6 +14,7 @@ import cv2
 from w2l.hparams import hparams
 import torchvision
 from multiprocessing import Pool
+from collections import defaultdict
 
 augment_for_wav2lip = torchvision.transforms.Compose([
     torchvision.transforms.ColorJitter(brightness=(
@@ -24,6 +25,7 @@ augment_for_syncnet = torchvision.transforms.Compose([
     torchvision.transforms.ColorJitter(brightness=(
         0.8, 1.2), contrast=(0.8, 1.2), saturation=(0.8, 1.2), hue=0),
     torchvision.transforms.RandomHorizontalFlip(p=0.5),
+    torchvision.transforms.RandomRotation(5),
 ])
 
 
@@ -134,6 +136,35 @@ class Dataset(object):
         assert len(self.all_videos) > 0, "no video dirs found from: {} with filelists_dir: {}".format(
             data_root, filelists_dir,
         )
+        self.synclosses = {}
+        synclosses_path = os.path.join(data_root, "synclosses.npy")
+        if os.path.exists(synclosses_path):
+            self.synclosses = np.load(synclosses_path, allow_pickle=True).tolist()
+            videos_set = set(self.all_videos)
+            drops = []
+
+            keys = list(self.synclosses.keys())
+            for key in keys:
+                self.synclosses[os.path.join(data_root, key)] = self.synclosses.pop(key)
+
+            for vidname in self.synclosses.keys():
+                if vidname not in videos_set:
+                    drops.append(vidname)
+
+            for drop in drops:
+                self.synclosses.pop(drop)
+            for vidname in self.all_videos:
+                if vidname not in self.synclosses:
+                    print("vidname not found in synclosses: {}".format(vidname))
+                    continue
+                self.synclosses[vidname] = np.mean(self.synclosses[vidname])
+
+            means = list(self.synclosses.values())
+            min_mean_syncloss = min(means)
+            max_mean_syncloss = max(means)
+            width = max_mean_syncloss - min_mean_syncloss
+            for vidname in self.synclosses.keys():
+                self.synclosses[vidname] = (self.synclosses[vidname] - max_mean_syncloss) * -1.0 / width
 
         self.img_names = {}
         self.orig_mels = Mels()
@@ -171,6 +202,9 @@ class Dataset(object):
                 sum([len(self.img_names[v]) for v in self.all_videos]) / self.syncnet_T))
         print("data length: ", self.data_len)
 
+    def get_data_weight(self, vidname):
+        return self.synclosses.get(vidname, 1.0)
+
     def get_vidname(self, idx):
         if self.inner_shuffle:
             idx = np.random.choice(self.linear_space)
@@ -180,9 +214,8 @@ class Dataset(object):
         # 0.jpg is the first image
         return int(basename(frame).split('.')[0])
 
-    def get_window(self, start_frame):
+    def get_window(self, start_frame, vidname):
         start_id = self.get_frame_id(start_frame)
-        vidname = dirname(start_frame)
 
         window_fnames = []
         for frame_id in range(start_id, start_id + self.syncnet_T):
@@ -315,8 +348,8 @@ class Wav2LipDataset(Dataset):
             img_name, wrong_img_name = self.sample_right_wrong_images(
                 img_names)
 
-            window_fnames = self.get_window(img_name)
-            wrong_window_fnames = self.get_window(wrong_img_name)
+            window_fnames = self.get_window(img_name, vidname)
+            wrong_window_fnames = self.get_window(wrong_img_name, vidname)
             if window_fnames is None or wrong_window_fnames is None:
                 idx += 1
                 continue
@@ -365,11 +398,13 @@ class Wav2LipDataset(Dataset):
             indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)
             landmarks = torch.FloatTensor(landmarks)
 
+            data_weight = self.get_data_weight(vidname)
+
             # x: (T, 6, H, W)
             # y: (T, 3, H, W)
             # indiv_mels: (T, 1, 80, 16)
             # mel: (1, 80, 16)
-            return x, indiv_mels, mel, y, landmarks
+            return x, indiv_mels, mel, y, landmarks, data_weight
 
 
 class SyncnetDataset(Dataset):
@@ -386,12 +421,12 @@ class SyncnetDataset(Dataset):
             img_name, wrong_img_name = self.sample_right_wrong_images(
                 img_names)
 
-            window_fnames = self.get_window(img_name)
+            window_fnames = self.get_window(img_name, vidname)
             if window_fnames is None:
                 idx += 1
                 continue
 
-            false_window_fnames = self.get_window(wrong_img_name)
+            false_window_fnames = self.get_window(wrong_img_name, vidname)
             if false_window_fnames is None:
                 idx += 1
                 continue
@@ -451,8 +486,9 @@ class SyncnetDataset(Dataset):
             if self.img_augment:
                 x = self.augment_window(x)
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
+            data_weight = self.get_data_weight(vidname)
 
-            return x, mel
+            return x, mel, data_weight
 
 
 # def dump_as_video(window_fnames, vidname, start_frame_num, spec):

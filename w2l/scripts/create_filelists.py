@@ -65,12 +65,12 @@ class SyncnetDataset(Dataset):
             img_name, wrong_img_name = self.sample_right_wrong_images(
                 img_names)
 
-            window_fnames = self.get_window(img_name)
+            window_fnames = self.get_window(img_name, vidname)
             if window_fnames is None:
                 idx += 1
                 continue
 
-            false_window_fnames = self.get_window(wrong_img_name)
+            false_window_fnames = self.get_window(wrong_img_name, vidname)
             if false_window_fnames is None:
                 idx += 1
                 continue

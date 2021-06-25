@@ -87,7 +87,7 @@ def save_sample_images(x, g, gt, global_step, checkpoint_dir, g_landmarks=None, 
             cv2.imwrite('{}/{}_{}.jpg'.format(folder, batch_idx, t), c[t])
 
 
-logloss = nn.BCELoss()
+logloss = nn.BCELoss(reduction='none')
 
 
 def cosine_loss(a, v, y):
@@ -97,7 +97,7 @@ def cosine_loss(a, v, y):
     return loss
 
 
-l1loss = nn.L1Loss()
+l1loss = nn.L1Loss(reduction='none')
 
 
 def get_landmarks_loss(g_landmarks, gt_landmarks):
@@ -106,7 +106,7 @@ def get_landmarks_loss(g_landmarks, gt_landmarks):
         g_landmarks[:, :, :, 1] - gt_landmarks[:, :, :, 1]
     square_sum = torch.sum(axis_delta ** 2, dim=2)
     loss_mean_T = torch.mean(square_sum, dim=1)
-    return torch.mean(loss_mean_T)
+    return loss_mean_T
 
 
 def get_sync_loss(syncnet, mel, half_g, expect_true=True):
@@ -119,10 +119,10 @@ def get_sync_loss(syncnet, mel, half_g, expect_true=True):
         y = torch.ones((B, 1), dtype=torch.float32, device=device)
     else:
         y = torch.zeros((B, 1), dtype=torch.float32, device=device)
-    return cosine_loss(a, v, y)
+    return cosine_loss(a, v, y).reshape((B,))
 
 
-l2loss = nn.MSELoss()
+l2loss = nn.MSELoss(reduction='none')
 
 
 def train(device, model, disc, train_data_loader, test_data_loader, optimizer, disc_optimizer,
@@ -193,10 +193,11 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
         running_landmarks_loss = 0.
 
         prog_bar = tqdm(enumerate(train_data_loader))
-        for step, (x, indiv_mels, mel, gt, landmarks_gt) in prog_bar:
+        for step, (x, indiv_mels, mel, gt, landmarks_gt, weights) in prog_bar:
             B = x.size(0)
             if B == 1:
                 continue
+
             disc.train()
             model.train()
             syncnet.eval()
@@ -206,6 +207,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             indiv_mels = indiv_mels.to(device)
             gt = gt.to(device)
             landmarks_gt = landmarks_gt.to(device)
+            weights = weights.to(device)
             # masks = masks.to(device)
             g, landmarks_g = model(indiv_mels, x)
             # g: (B, T, 3, img_size, img_size)
@@ -218,6 +220,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             sync_loss = get_sync_loss(syncnet, mel, half_g)
 
             perceptual_loss = disc.perceptual_forward(half_g)
+            perceptual_loss = perceptual_loss.reshape((B, hparams.syncnet_T)).mean(1)
 
             # masks_for_g = masks.permute((0, 2, 1, 3, 4))
 
@@ -230,15 +233,16 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             # masked_g = masks_for_g * g
             # masked_gt = masks_for_g * gt
 
-            l1 = l1loss(half_g, half_gt)
+            l1 = l1loss(half_g, half_gt).reshape(
+                (B, hparams.syncnet_T * 3 * hparams.half_img_size * hparams.img_size)).mean(1)
 
-            ssim = ms_ssim_loss(gt, g)
+            ssim = ms_ssim_loss(gt, g, B, hparams.syncnet_T)
             rec_loss = hparams.l1_wt * \
                 l1 + hparams.ssim_wt * ssim
 
             loss = (hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss +
                     landmarks_loss * hparams.landmarks_wt + (1. - hparams.syncnet_wt - hparams.disc_wt) * rec_loss)
-            loss /= K
+            loss = (loss * weights / K).mean()
             loss.backward()
 
             if global_step % K == 0:
@@ -252,15 +256,16 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             y_real = torch.ones((disc_batch_size, 1),
                                 dtype=torch.float32, device=device)
             disc_real_loss = F.binary_cross_entropy(
-                pred, y_real)
+                pred, y_real, reduction='none')
 
             pred = disc(half_g.detach())
             y_fake = torch.zeros((disc_batch_size, 1),
                                  dtype=torch.float32, device=device)
             disc_fake_loss = F.binary_cross_entropy(
-                pred, y_fake)
+                pred, y_fake, reduction='none')
 
             disc_loss = (disc_real_loss + disc_fake_loss) / K / 2.
+            disc_loss = (disc_loss.reshape((B, hparams.syncnet_T)).mean(1) * weights).mean()
             disc_loss.backward()
 
             sync_real_loss = get_sync_loss(
@@ -269,6 +274,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                 syncnet, mel, half_g.detach(), expect_true=False)
 
             sync_train_loss = (sync_real_loss + sync_fake_loss) / K / 2.
+            sync_train_loss = (sync_train_loss * weights).mean()
             # sync_train_loss.backward()
 
             if global_step % K == 0:
@@ -292,20 +298,20 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             global_step += 1
             # cur_session_steps = global_step - resumed_step
 
-            running_disc_real_loss += disc_real_loss.detach()
-            running_disc_fake_loss += disc_fake_loss.detach()
+            running_disc_real_loss += disc_real_loss.detach().mean()
+            running_disc_fake_loss += disc_fake_loss.detach().mean()
             running_disc_loss += disc_loss.detach()
             running_target_loss += loss.detach()
-            running_l1_loss += l1.detach()
-            running_ssim_loss += ssim.detach()
-            running_sync_loss += sync_loss.detach()
-            running_perceptual_loss += perceptual_loss.detach()
+            running_l1_loss += l1.detach().mean()
+            running_ssim_loss += ssim.detach().mean()
+            running_sync_loss += sync_loss.detach().mean()
+            running_perceptual_loss += perceptual_loss.detach().mean()
 
-            running_sync_real_loss += sync_real_loss.detach()
-            running_sync_fake_loss += sync_fake_loss.detach()
-            running_sync_train_loss += sync_train_loss.detach()
+            running_sync_real_loss += sync_real_loss.detach().mean()
+            running_sync_fake_loss += sync_fake_loss.detach().mean()
+            running_sync_train_loss += sync_train_loss.detach().mean()
 
-            running_landmarks_loss += landmarks_loss.detach()
+            running_landmarks_loss += landmarks_loss.detach().mean()
 
             if global_step == 1 or global_step % checkpoint_interval == 0:
                 save_checkpoint(
@@ -411,8 +417,7 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         ], [], [], [], [], [], [], [], [], [], [], []
 
     half_img_size = hparams.img_size // 2
-    expand_y_start = half_img_size - max(10, 168 - half_img_size)
-    for step, (x, indiv_mels, mel, gt, landmarks_gt) in enumerate((test_data_loader)):
+    for step, (x, indiv_mels, mel, gt, landmarks_gt, weights) in enumerate((test_data_loader)):
         B = x.size(0)
         if B == 1:
             continue
@@ -425,6 +430,7 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         indiv_mels = indiv_mels.to(device)
         gt = gt.to(device)
         landmarks_gt = landmarks_gt.to(device)
+        weights = weights.to(device)
         g, landmarks_g = model(indiv_mels, x)
 
         landmarks_loss = get_landmarks_loss(landmarks_g, landmarks_gt)
@@ -454,38 +460,42 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
             syncnet, mel, half_g.detach(), expect_true=False)
 
         perceptual_loss = disc.perceptual_forward(half_g)
+        perceptual_loss = perceptual_loss.reshape((B, hparams.syncnet_T)).mean(1)
 
         # masks_for_g = masks.permute((0, 2, 1, 3, 4))
         # masked_g = masks_for_g * g
         # masked_gt = masks_for_g * gt
 
-        l1 = l1loss(half_g, half_gt)
-        ssim = ms_ssim_loss(gt, g)
+        l1 = l1loss(half_g, half_gt).reshape(
+                (B, hparams.syncnet_T * 3 * hparams.half_img_size * hparams.img_size)).mean(1)
+
+        ssim = ms_ssim_loss(gt, g, B, hparams.syncnet_T)
         rec_loss = hparams.l1_wt * \
             l1 + hparams.ssim_wt * ssim
 
         loss = hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss + \
             landmarks_loss * hparams.landmarks_wt + \
             (1. - hparams.syncnet_wt - hparams.disc_wt) * rec_loss
+        loss = (loss * weights).mean()
 
-        real = disc_real_loss.detach()
-        fake = disc_fake_loss.detach()
+        real = disc_real_loss.detach().mean()
+        fake = disc_fake_loss.detach().mean()
         running_disc_real_loss.append(real)
         running_disc_fake_loss.append(fake)
         running_disc_train_loss.append((real + fake) / 2.0)
 
         running_target_loss.append(loss.detach())
-        running_l1_loss.append(l1.detach())
-        running_ssim_loss.append(ssim.detach())
-        running_sync_loss.append(sync_loss.detach())
-        running_perceptual_loss.append(perceptual_loss.detach())
+        running_l1_loss.append(l1.detach().mean())
+        running_ssim_loss.append(ssim.detach().mean())
+        running_sync_loss.append(sync_loss.detach().mean())
+        running_perceptual_loss.append(perceptual_loss.detach().mean())
 
-        fake = sync_fake_loss.detach()
-        real = sync_real_loss.detach()
+        fake = sync_fake_loss.detach().mean()
+        real = sync_real_loss.detach().mean()
         running_sync_fake_loss.append(fake)
         running_sync_real_loss.append(real)
         running_sync_train_loss.append((fake + real) / 2.0)
-        running_landmarks_loss.append(landmarks_loss.detach())
+        running_landmarks_loss.append(landmarks_loss.detach().mean())
 
         if step > eval_steps:
             break
