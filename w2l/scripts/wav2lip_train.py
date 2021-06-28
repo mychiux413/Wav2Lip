@@ -16,6 +16,7 @@ import argparse
 from w2l.hparams import hparams
 from w2l.utils.data import Wav2LipDataset
 from w2l.utils.env import device, use_cuda
+from w2l.utils.loss import ms_ssim_loss
 
 global_step = 0
 global_epoch = 0
@@ -40,7 +41,7 @@ def save_sample_images(x, g, gt, global_step, checkpoint_dir):
     collage = np.concatenate((refs, inps, g, gt), axis=-2)
     for batch_idx, c in enumerate(collage):
         for t in range(len(c)):
-            cv2.imwrite('{}/{}_{}.png'.format(folder, batch_idx, t), c[t])
+            cv2.imwrite('{}/{}_{}.jpg'.format(folder, batch_idx, t), c[t])
 
 
 logloss = nn.BCELoss()
@@ -53,7 +54,7 @@ def cosine_loss(a, v, y):
     return loss
 
 
-recon_loss = nn.L1Loss()
+l1loss = nn.L1Loss()
 
 
 def get_sync_loss(mel, g):
@@ -73,7 +74,7 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
 
     while global_epoch < nepochs:
         print('Starting Epoch: {}'.format(global_epoch))
-        running_sync_loss, running_l1_loss, running_target_loss = 0., 0., 0.
+        running_sync_loss, running_rec_loss, running_target_loss = 0., 0., 0.
         prog_bar = tqdm(enumerate(train_data_loader))
         for step, (x, indiv_mels, mel, gt) in prog_bar:
             if x.size(0) == 1:
@@ -94,10 +95,10 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             else:
                 sync_loss = 0.
 
-            l1loss = recon_loss(g, gt)
+            rec_loss = 0.14 * l1loss(g, gt) + ms_ssim_loss(g, gt) * 0.86
 
             loss = hparams.syncnet_wt * sync_loss + \
-                (1 - hparams.syncnet_wt) * l1loss
+                (1 - hparams.syncnet_wt) * rec_loss
             loss.backward()
             optimizer.step()
 
@@ -108,7 +109,7 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             # cur_session_steps = global_step - resumed_step
 
             running_target_loss += loss.item()
-            running_l1_loss += l1loss.item()
+            running_rec_loss += rec_loss.item()
             if hparams.syncnet_wt > 0.:
                 running_sync_loss += sync_loss.item()
             else:
@@ -123,13 +124,13 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
                     average_sync_loss = eval_model(
                         test_data_loader, global_step, device, model, checkpoint_dir)
 
-                    if average_sync_loss < .75:
+                    if average_sync_loss < .4:
                         # without image GAN a lesser weight is sufficient
                         hparams.set_hparam('syncnet_wt', 0.01)
 
             next_step = step + 1
-            prog_bar.set_description('L1: {:04f}, Sync Loss: {:04f}, Target Loss: {:04f}'.format(
-                running_l1_loss / next_step,
+            prog_bar.set_description('Rec: {:04f}, Sync Loss: {:04f}, Target Loss: {:04f}'.format(
+                running_rec_loss / next_step,
                 running_sync_loss / next_step,
                 running_target_loss / next_step,
             ))
@@ -158,12 +159,12 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
             g = model(indiv_mels, x)
 
             sync_loss = get_sync_loss(mel, g)
-            l1loss = recon_loss(g, gt)
+            rec_loss = 0.14 * l1loss(g, gt) + ms_ssim_loss(g, gt) * 0.86
             loss = hparams.syncnet_wt * sync_loss + \
-                (1 - hparams.syncnet_wt) * l1loss
+                (1 - hparams.syncnet_wt) * rec_loss
 
             sync_losses.append(sync_loss.item())
-            recon_losses.append(l1loss.item())
+            recon_losses.append(rec_loss.item())
             target_losses.append(loss.item())
 
             if step > eval_steps:
@@ -171,7 +172,7 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
                 averaged_recon_loss = np.mean(recon_losses)
                 averaged_target_loss = np.mean(target_losses)
 
-                print('L1: {:04f}, Sync loss: {:04f}, Target Loss: {:04f}'.format(
+                print('Rec: {:04f}, Sync loss: {:04f}, Target Loss: {:04f}'.format(
                     averaged_recon_loss, averaged_sync_loss, averaged_target_loss))
 
                 return averaged_sync_loss
@@ -223,28 +224,30 @@ def load_checkpoint(path, model, optimizer, reset_optimizer=False, overwrite_glo
     return model
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='Code to train the Wav2Lip model without the visual quality discriminator')
+def main(args=None):
 
-    parser.add_argument(
-        "--data_root", help="Root folder of the preprocessed LRS2 dataset", required=True, type=str)
+    if args is None:
+        parser = argparse.ArgumentParser(
+            description='Code to train the Wav2Lip model without the visual quality discriminator')
 
-    parser.add_argument(
-        '--checkpoint_dir', help='Save checkpoints to this directory', required=True, type=str)
-    parser.add_argument('--syncnet_checkpoint_path',
-                        help='Load the pre-trained Expert discriminator', required=True, type=str)
+        parser.add_argument(
+            "--data_root", help="Root folder of the preprocessed LRS2 dataset", required=True, type=str)
 
-    parser.add_argument(
-        '--checkpoint_path', help='Resume from this checkpoint', default=None, type=str)
-    parser.add_argument('--train_limit', type=int,
-                        required=False, default=0)
-    parser.add_argument('--val_limit', type=int,
-                        required=False, default=0)
-    parser.add_argument('--filelists_dir',
-                        help='Specify filelists directory', type=str, default='filelists')
+        parser.add_argument(
+            '--checkpoint_dir', help='Save checkpoints to this directory', required=True, type=str)
+        parser.add_argument('--syncnet_checkpoint_path',
+                            help='Load the pre-trained Expert discriminator', required=True, type=str)
 
-    args = parser.parse_args()
+        parser.add_argument(
+            '--checkpoint_path', help='Resume from this checkpoint', default=None, type=str)
+        parser.add_argument('--train_limit', type=int,
+                            required=False, default=0)
+        parser.add_argument('--val_limit', type=int,
+                            required=False, default=0)
+        parser.add_argument('--filelists_dir',
+                            help='Specify filelists directory', type=str, default='filelists')
+
+        args = parser.parse_args()
 
     checkpoint_dir = args.checkpoint_dir
 

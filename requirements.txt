@@ -5,7 +5,13 @@ scipy>=1.5.4
 pandas>=1.1.5
 tqdm>=4.59.0
 python_speech_features>=0.6
+<<<<<<< HEAD
 google-cloud-texttospeech
 pydub
+=======
+pytorch-msssim
+jedi==0.17.2
+pyreadline
+>>>>>>> change-archs
 # torch>=1.7.1+cu110
 # torchvision>=0.8.2+cu110

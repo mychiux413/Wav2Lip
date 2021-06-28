@@ -88,14 +88,15 @@ def create_audio_encoder(audio_layers, batch_size, for_wav2lip=False):
             mel_step_size = evaluate_new_size_after_conv(mel_step_size, 3, 1, 1)
             shapes.append((BT, channels * 2, mel_channel_size, mel_step_size))
         elif i == audio_layers - 1:
-            sequentials.append(Conv2d(channels, channels * 2, kernel_size=3, stride=1, padding=0))
+            double_channels = min(512, channels * 2)
+            sequentials.append(Conv2d(channels, double_channels, kernel_size=3, stride=1, padding=0))
             mel_channel_size = evaluate_new_size_after_conv(mel_channel_size, 3, 1, 0)
             mel_step_size = evaluate_new_size_after_conv(mel_step_size, 3, 1, 0)
 
-            sequentials.append(Conv2d(channels * 2, channels * 2, kernel_size=1, stride=1, padding=0))
+            sequentials.append(Conv2d(double_channels, double_channels, kernel_size=1, stride=1, padding=0))
             mel_channel_size = evaluate_new_size_after_conv(mel_channel_size, 1, 1, 0)
             mel_step_size = evaluate_new_size_after_conv(mel_step_size, 1, 1, 0)
-            shapes.append((BT, channels * 2, mel_channel_size, mel_step_size))
+            shapes.append((BT, double_channels, mel_channel_size, mel_step_size))
 
         else:
             if audio_layers == 5:
@@ -172,7 +173,7 @@ def create_audio_encoder(audio_layers, batch_size, for_wav2lip=False):
                     mel_channel_size = evaluate_new_size_after_conv(mel_channel_size, 3, 1, 1)
                     mel_step_size = evaluate_new_size_after_conv(mel_step_size, 3, 1, 1)
                     shapes.append((BT, channels * 2, mel_channel_size, mel_step_size))
-        channels *= 2
+        channels = min(512, channels * 2)
     assert mel_channel_size == 1, mel_channel_size
     assert mel_step_size == 1, mel_step_size
 

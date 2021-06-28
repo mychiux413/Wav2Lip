@@ -1,5 +1,9 @@
 from glob import glob
 import os
+import json
+from distutils.util import strtobool
+
+from numpy.lib.arraysetops import isin
 
 
 class HParams:
@@ -9,6 +13,19 @@ class HParams:
         for key, value in kwargs.items():
             self.data[key] = value
 
+        self.overwirte_with_env()
+        self.set_hparam('half_img_size', self.img_size // 2)
+
+    def __getattr__(self, key):
+        if key not in self.data:
+            raise AttributeError("'HParams' object has no attribute %s" % key)
+        return self.data[key]
+
+    def set_hparam(self, key, value):
+        print("set hparam {} as {}".format(key, value))
+        self.data[key] = value
+
+    def overwirte_with_env(self):
         # **** environ control ****
         for key, value in self.data.items():
             env_key = "W2L_" + key.upper()
@@ -19,17 +36,34 @@ class HParams:
                 if isinstance(value, tp):
                     print("overwrite HParams from environ var: {}={}".format(
                         env_key, value_from_env))
-                    self.data[key] = tp(value_from_env)
+                    if isinstance(value, bool):
+                        self.data[key] = strtobool(value_from_env)
+                    else:
+                        self.data[key] = tp(value_from_env)
                     break
         # *************************
 
-    def __getattr__(self, key):
-        if key not in self.data:
-            raise AttributeError("'HParams' object has no attribute %s" % key)
-        return self.data[key]
+    def to_json(self, path):
+        print("dump hparams to: {}".format(path))
+        with open(path, 'w') as f:
+            json.dump(self.data, f, indent=4, ensure_ascii=False)
 
-    def set_hparam(self, key, value):
-        self.data[key] = value
+    @classmethod
+    def from_json(cls, path):
+        print("load hparams from: {}".format(path))
+        assert os.path.exists(path)
+        with open(path, 'r') as f:
+            data = json.load(f)
+            obj = cls()
+            obj.data = data
+            return obj
+
+    def overwrite_by_json(self, path):
+        print("overwrite hparams from: {}".format(path))
+        assert os.path.exists(path)
+        with open(path, 'r') as f:
+            data = json.load(f)
+        self.data = data
 
 
 # Default hyperparameters
@@ -81,39 +115,58 @@ hparams = HParams(
     fmax=7600,  # To be increased/reduced depending on data.
 
     ###################### Our training parameters #################################
-    img_size=96,  # 96 or 192
+    img_size=192,  # 96 or 192
+    half_img_size=96,
     fps=30,
 
-    batch_size=8,
-    initial_learning_rate=5e-5,
-    opt_amsgrad=True,
+    batch_size=4,
+    initial_learning_rate=0.001,
+    learning_rate_decay_rate=0.9,
+    min_learning_rate=1e-6,
+    opt_amsgrad=False,
     opt_weight_decay=0.0,
     # ctrl + c, stop whenever eval loss is consistently greater than train loss for ~10 epochs
     nepochs=200000000000000000,
-    num_workers=8,
-    checkpoint_interval=10000,
-    eval_interval=10000,
+    num_workers=2,
+    checkpoint_interval=20000,
+    eval_interval=20000,
     save_optimizer_state=True,
+    warm_up_epochs=5,
 
     sampling_half_window_size_seconds=2.0,
-    unmask_fringe_width=5,
     img_augment=True,
 
+    # mobilefacenet
+    mobilefacenet_model_path='checkpoints/mobilefacenet_model_best.pth.tar',
+    expand_mouth_width_ratio=0.6,
+    expand_mouth_height_ratio=0.7,
+    x1_mouth_mask_edge=0.25,
+    x2_mouth_mask_edge=0.75,
+
     # is initially zero, will be set automatically to 0.03 later. Leads to faster convergence.
-    syncnet_wt=0.0,
-    syncnet_batch_size=64,
-    syncnet_lr=5e-6,
+    syncnet_wt=0.03,
+    syncnet_batch_size=128,
+    syncnet_lr=1e-4,
+    syncnet_lr_decay_rate=0.995,
+    syncnet_min_lr=1e-7,
     syncnet_eval_interval=20000,
     syncnet_checkpoint_interval=20000,
-    syncnet_T=5,
+    syncnet_T=6,
     syncnet_mel_step_size=16,
-    syncnet_opt_amsgrad=True,
+    syncnet_opt_amsgrad=False,
     syncnet_opt_weight_decay=0.0,
 
     disc_wt=0.07,
-    disc_initial_learning_rate=1e-6,
-    disc_opt_amsgrad=True,
+    disc_initial_learning_rate=5e-5,
+    disc_learning_rate_decay_rate=0.9,
+    disc_min_learning_rate=1e-6,
+    disc_opt_amsgrad=False,
     disc_opt_weight_decay=0.0,
+
+    l1_wt=0.5,
+    ssim_wt=0.5,
+    landmarks_wt=10.0,
+    landmarks_points=[2, 5, 8, 11, 14, 31, 33, 35, 48, 51, 54, 57, 62, 66],
 )
 
 
