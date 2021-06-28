@@ -7,11 +7,8 @@ from tqdm import tqdm
 import numpy as np
 from w2l.hparams import hparams
 import torch
-<<<<<<< HEAD
-=======
 from w2l.utils.facenet import load_facenet_model
 from w2l.utils.data import cal_mouth_mask_pos
->>>>>>> change-archs
 
 
 class Smoothier:

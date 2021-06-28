@@ -28,17 +28,17 @@ class SyncNet_color(nn.Module):
             Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
             Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
 
-            Conv2d(256, 368, kernel_size=3, stride=2, padding=1),
-            Conv2d(368, 368, kernel_size=3, stride=1, padding=1, residual=True),
-            Conv2d(368, 368, kernel_size=3, stride=1, padding=1, residual=True),
-
-            Conv2d(368, 512, kernel_size=3, stride=2, padding=1),
+            Conv2d(256, 512, kernel_size=3, stride=2, padding=1),
             Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
             Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
 
-            Conv2d(512, 512, kernel_size=3, stride=2, padding=1),
-            Conv2d(512, 512, kernel_size=3, stride=1, padding=0),
-            Conv2d(512, 512, kernel_size=1, stride=1, padding=0),)
+            Conv2d(512, 1024, kernel_size=3, stride=2, padding=1),
+            Conv2d(1024, 1024, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(1024, 1024, kernel_size=3, stride=1, padding=1, residual=True),
+
+            Conv2d(1024, 1024, kernel_size=3, stride=2, padding=1),
+            Conv2d(1024, 1024, kernel_size=3, stride=1, padding=0),
+            Conv2d(1024, 1024, kernel_size=1, stride=1, padding=0),)
 
         self.audio_encoder = nn.Sequential(
             Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
@@ -57,12 +57,12 @@ class SyncNet_color(nn.Module):
             Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
             Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
 
-            Conv2d(256, 368, kernel_size=3, stride=1, padding=1),
-            Conv2d(368, 368, kernel_size=3, stride=1, padding=1, residual=True),
-            Conv2d(368, 368, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(256, 512, kernel_size=3, stride=1, padding=1),
+            Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
 
-            Conv2d(368, 512, kernel_size=3, stride=1, padding=0),
-            Conv2d(512, 512, kernel_size=1, stride=1, padding=0),)
+            Conv2d(512, 1024, kernel_size=3, stride=1, padding=0),
+            Conv2d(1024, 1024, kernel_size=1, stride=1, padding=0),)
 
     def dump_face(self, face_sequences, dump_dir):
         from uuid import uuid4
