@@ -269,12 +269,12 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             disc_loss.backward()
 
             sync_real_loss = get_sync_loss(
-                syncnet, mel, half_gt, expect_true=True)
+                syncnet, mel, half_gt, expect_true=True) * weights
             sync_fake_loss = get_sync_loss(
-                syncnet, mel, half_g.detach(), expect_true=False)
+                syncnet, mel, half_g.detach(), expect_true=False) * weights
 
             sync_train_loss = (sync_real_loss + sync_fake_loss) / K / 2.
-            sync_train_loss = (sync_train_loss * weights).mean()
+            sync_train_loss = sync_train_loss.mean()
             # sync_train_loss.backward()
 
             if global_step % K == 0:

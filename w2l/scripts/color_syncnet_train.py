@@ -24,7 +24,7 @@ from datetime import datetime
 global_step = 0
 global_epoch = 0
 
-logloss = nn.BCELoss()
+logloss = nn.BCELoss(reduction='none')
 
 
 def cosine_loss(a, v, y):
@@ -64,7 +64,7 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
         running_loss, running_fake_loss, running_real_loss = 0., 0., 0.
         
         prog_bar = tqdm(enumerate(train_data_loader))
-        for step, (x, mel) in prog_bar:
+        for step, (x, mel, weights) in prog_bar:
             # x: B x 2T x 3 x H x W
             B = x.size(0)
             if B == 1:
@@ -88,14 +88,15 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             x_false = x_false.to(device)
 
             mel = mel.to(device)
+            weights = weights.to(device)
 
             a, v = model(mel, x_true)
-            loss_true = cosine_loss(a, v, y_true)
+            loss_true = (cosine_loss(a, v, y_true) * weights).mean()
             a, v = model(mel, x_false)
-            loss_false = cosine_loss(a, v, y_false)
+            loss_false = (cosine_loss(a, v, y_false) * weights).mean()
             # y = y.to(device)
 
-            loss = (loss_true * 0.5 + loss_false * 0.5) / K
+            loss = (loss_true * 0.55 + loss_false * 0.45) / K
             loss.backward()
 
             if global_step % K == 0:
@@ -144,7 +145,7 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir,
     losses, real_losses, fake_losses = [], [], []
     half_img_size = hparams.img_size // 2
     while 1:
-        for step, (x, mel) in enumerate(test_data_loader):
+        for step, (x, mel, weights) in enumerate(test_data_loader):
             B = x.size(0)
             if B == 1:
                 continue
@@ -169,11 +170,12 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir,
             # x = x.to(device)
 
             mel = mel.to(device)
+            weights = weights.to(device)
 
             a, v = model(mel, x_true)
-            loss_true = cosine_loss(a, v, y_true)
+            loss_true = (cosine_loss(a, v, y_true) * weights).mean()
             a, v = model(mel, x_false)
-            loss_false = cosine_loss(a, v, y_false)
+            loss_false = (cosine_loss(a, v, y_false) * weights).mean()
 
             # a, v = model(mel, x)
             # y = y.to(device)
@@ -181,7 +183,7 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir,
             # loss = cosine_loss(a, v, y)
             _t = loss_true.detach()
             _f = loss_false.detach()
-            losses.append(_t * 0.5 + _f * 0.5)
+            losses.append(_t * 0.55 + _f * 0.45)
             real_losses.append(_t)
             fake_losses.append(_f)
 

@@ -164,7 +164,7 @@ class Dataset(object):
             max_mean_syncloss = max(means)
             width = max_mean_syncloss - min_mean_syncloss
             for vidname in self.synclosses.keys():
-                self.synclosses[vidname] = (self.synclosses[vidname] - max_mean_syncloss) * -1.0 / width
+                self.synclosses[vidname] = max(0.0, (self.synclosses[vidname] - max_mean_syncloss) * -1.0 / width)
 
         self.img_names = {}
         self.orig_mels = Mels()

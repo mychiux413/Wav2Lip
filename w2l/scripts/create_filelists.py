@@ -217,7 +217,7 @@ def evaluate_datasets_losses(syncnet_checkpoint_path, data_root, epochs=5, only_
 
                 loss = loss_true
                 if not only_true_image:
-                    loss = (loss_true * 0.5 + loss_false * 0.5)
+                    loss = (loss_true * 0.55 + loss_false * 0.45)
                 for vidname, l in zip(vidnames, loss):
                     losses[vidname].append(l)
             print("review losses")
