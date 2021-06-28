@@ -122,10 +122,10 @@ class Wav2Lip(nn.Module):
                           Conv2d(192, 192, kernel_size=3, stride=1, padding=1, residual=True),),  # 96,96  (+64)
 
 
-            nn.Sequential(Conv2dTranspose(224, 112, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.Sequential(Conv2dTranspose(224, 112, kernel_size=3, stride=(1, 2), padding=1, output_padding=(0, 1)),
                           Conv2d(112, 112, kernel_size=3, stride=1,
                                  padding=1, residual=True),
-                          Conv2d(112, 112, kernel_size=3, stride=1, padding=1, residual=True),), ])   # 192,192  (+32)
+                          Conv2d(112, 112, kernel_size=3, stride=1, padding=1, residual=True),), ])   # 96,192  (+32)
 
         self.output_block = nn.Sequential(Conv2d(128, 32, kernel_size=3, stride=1, padding=1), # (+16)
                                           nn.Conv2d(32, 3, kernel_size=1,
@@ -214,8 +214,8 @@ class Wav2Lip(nn.Module):
             x = f(x)
             try:
                 feat = feats.pop()
-                # if len(feats) == 0:
-                #     feat = feat[:, :, hp.img_size // 2:]
+                if len(feats) == 0:
+                    feat = feat[:, :, hp.half_img_size:]
                 x = torch.cat((x, feat), dim=1)
             except Exception as e:
                 print("x", x.size(), "feat", feat.size())
@@ -224,9 +224,9 @@ class Wav2Lip(nn.Module):
         x = self.output_block(x)
 
         if input_dim_size > 4:
-            x = x.reshape((B, hp.syncnet_T, 3, hp.img_size, hp.img_size))
+            x = x.reshape((B, hp.syncnet_T, 3, hp.half_img_size, hp.img_size))
 
-        return x, landmarks  # (B, T, 3, img_size, img_size), (B, T, 14, 2)
+        return x, landmarks  # (B, T, 3, half_img_size, img_size), (B, T, 14, 2)
 
 
 class Wav2Lip_disc_qual(nn.Module):

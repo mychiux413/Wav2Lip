@@ -209,13 +209,14 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             landmarks_gt = landmarks_gt.to(device)
             weights = weights.to(device)
             # masks = masks.to(device)
-            g, landmarks_g = model(indiv_mels, x)
+            half_g, landmarks_g = model(indiv_mels, x)
+            upper_gt = gt[:, :, :, :half_img_size]
+            g = torch.cat([upper_gt, half_g], dim=3)
             # g: (B, T, 3, img_size, img_size)
 
             landmarks_loss = get_landmarks_loss(landmarks_g, landmarks_gt)
 
             half_gt = gt[:, :, :, half_img_size:]
-            half_g = g[:, :, :, half_img_size:]
 
             sync_loss = get_sync_loss(syncnet, mel, half_g)
 
@@ -431,12 +432,13 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         gt = gt.to(device)
         landmarks_gt = landmarks_gt.to(device)
         weights = weights.to(device)
-        g, landmarks_g = model(indiv_mels, x)
+        half_g, landmarks_g = model(indiv_mels, x)
+        upper_gt = gt[:, :, :, :half_img_size]
+        g = torch.cat([upper_gt, half_g], dim=3)
 
         landmarks_loss = get_landmarks_loss(landmarks_g, landmarks_gt)
         # masks = masks.to(device)
         half_gt = gt[:, :, :, half_img_size:]
-        half_g = g[:, :, :, half_img_size:]
 
         pred = disc(half_gt)
         disc_batch_size = pred.size(0)
