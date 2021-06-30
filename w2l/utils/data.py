@@ -129,7 +129,7 @@ class Dataset(object):
     def __init__(self, split, data_root, inner_shuffle=True,
                  limit=0, sampling_half_window_size_seconds=2.0,
                  img_augment=True,
-                 filelists_dir='filelists'):
+                 filelists_dir='filelists', use_syncnet_weights=True):
         self.all_videos = list(filter(
             lambda vidname: os.path.exists(join(vidname, "audio.ogg")),
             get_image_list(data_root, split, limit=limit, filelists_dir=filelists_dir)))
@@ -138,7 +138,7 @@ class Dataset(object):
         )
         self.synclosses = {}
         synclosses_path = os.path.join(data_root, "synclosses.npy")
-        if os.path.exists(synclosses_path):
+        if os.path.exists(synclosses_path) and use_syncnet_weights:
             self.synclosses = np.load(synclosses_path, allow_pickle=True).tolist()
             videos_set = set(self.all_videos)
             drops = []

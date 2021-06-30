@@ -630,6 +630,8 @@ def main(args=None):
                             help='Use ShuffleNetV2 Network as syncnet', action='store_true')
         parser.add_argument('--logdir',
                             help='Tensorboard logdir', default=None, type=str)
+        parser.add_argument('--use_syncnet_weights',
+                            help='Use Syncnet Weights for training', action='store_true')
         args = parser.parse_args()
 
     checkpoint_dir = args.checkpoint_dir
@@ -656,14 +658,16 @@ def main(args=None):
         limit=args.train_limit,
         filelists_dir=args.filelists_dir,
         img_augment=hparams.img_augment,
-        inner_shuffle=False)
+        inner_shuffle=False,
+        use_syncnet_weights=args.use_syncnet_weights)
     test_dataset = Wav2LipDataset(
         'val', args.data_root,
         sampling_half_window_size_seconds=hparams.sampling_half_window_size_seconds,
         img_augment=False,
         limit=300,  # val steps
         filelists_dir=args.filelists_dir,
-        inner_shuffle=False)
+        inner_shuffle=False,
+        use_syncnet_weights=False)
 
     def worker_init_fn(i):
         seed = int(time()) + i * 100

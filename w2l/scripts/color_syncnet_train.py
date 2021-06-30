@@ -279,7 +279,8 @@ def main(args=None):
                             help='Delay update', type=int, default=1)
         parser.add_argument('--shufflenet',
                             help='Use Shuffle net as faceencoder', action='store_true')
-
+        parser.add_argument('--use_syncnet_weights',
+                            help='Use Syncnet Weights for training', action='store_true')
         args = parser.parse_args()
 
     checkpoint_dir = args.checkpoint_dir
@@ -307,13 +308,15 @@ def main(args=None):
         img_augment=hparams.img_augment,
         sampling_half_window_size_seconds=1e10,
         filelists_dir=args.filelists_dir,
-        inner_shuffle=False)
+        inner_shuffle=False,
+        use_syncnet_weights=args.use_syncnet_weights)
     val_dataset = SyncnetDataset(
         'val', args.data_root, limit=args.val_limit,
         sampling_half_window_size_seconds=1e10,
         img_augment=False,
         filelists_dir=args.filelists_dir,
-        inner_shuffle=False)
+        inner_shuffle=False,
+        use_syncnet_weights=False)
 
     def worker_init_fn(i):
         seed = int(time()) + i * 100
