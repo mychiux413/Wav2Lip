@@ -75,16 +75,22 @@ class Wav2Lip(nn.Module):
             Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
 
             Conv2d(64, 128, kernel_size=3, stride=3, padding=1),
-            Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
-            Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(128, 128, kernel_size=3, stride=1,
+                   padding=1, residual=True),
+            Conv2d(128, 128, kernel_size=3, stride=1,
+                   padding=1, residual=True),
 
             Conv2d(128, 256, kernel_size=3, stride=(3, 2), padding=1),
-            Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
-            Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(256, 256, kernel_size=3, stride=1,
+                   padding=1, residual=True),
+            Conv2d(256, 256, kernel_size=3, stride=1,
+                   padding=1, residual=True),
 
             Conv2d(256, 512, kernel_size=3, stride=1, padding=1),
-            Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
-            Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(512, 512, kernel_size=3, stride=1,
+                   padding=1, residual=True),
+            Conv2d(512, 512, kernel_size=3, stride=1,
+                   padding=1, residual=True),
 
             Conv2d(512, 1024, kernel_size=3, stride=1, padding=0),
             Conv2d(1024, 1024, kernel_size=1, stride=1, padding=0),)
@@ -127,7 +133,7 @@ class Wav2Lip(nn.Module):
                                  padding=1, residual=True),
                           Conv2d(112, 112, kernel_size=3, stride=1, padding=1, residual=True),), ])   # 96,192  (+32)
 
-        self.output_block = nn.Sequential(Conv2d(128, 32, kernel_size=3, stride=1, padding=1), # (+16)
+        self.output_block = nn.Sequential(Conv2d(128, 32, kernel_size=3, stride=1, padding=1),  # (+16)
                                           nn.Conv2d(32, 3, kernel_size=1,
                                                     stride=1, padding=0),
                                           nn.Sigmoid())
@@ -147,31 +153,37 @@ class Wav2Lip(nn.Module):
         B = face_sequences.size(0)
         input_dim_size = len(face_sequences.size())
         if input_dim_size > 4:
-            dump = (face_sequences.reshape((B, hp.syncnet_T, 6, hp.img_size, hp.img_size)) * 255.).detach().cpu().numpy().astype(np.uint8)
+            dump = (face_sequences.reshape((B, hp.syncnet_T, 6, hp.img_size,
+                    hp.img_size)) * 255.).detach().cpu().numpy().astype(np.uint8)
         else:
-            dump = (face_sequences.reshape((B, 6, hp.img_size, hp.img_size)) * 255.).detach().cpu().numpy().astype(np.uint8)
+            dump = (face_sequences.reshape((B, 6, hp.img_size, hp.img_size))
+                    * 255.).detach().cpu().numpy().astype(np.uint8)
         hex = uuid4().hex
         for b in range(B):
             if input_dim_size > 4:
                 for t in range(6):
                     img = dump[b, t, :3]  # (3, H, W)
                     img = img.transpose((1, 2, 0))
-                    filename = os.path.join(dump_dir, f'wav2lip_{hex}_real_{b}-{t}.jpg')
+                    filename = os.path.join(
+                        dump_dir, f'wav2lip_{hex}_real_{b}-{t}.jpg')
                     cv2.imwrite(filename, img)
 
                     img = dump[b, t, 3:]  # (3, H, W)
                     img = img.transpose((1, 2, 0))
-                    filename = os.path.join(dump_dir, f'wav2lip_{hex}_fake_{b}-{t}.jpg')
+                    filename = os.path.join(
+                        dump_dir, f'wav2lip_{hex}_fake_{b}-{t}.jpg')
                     cv2.imwrite(filename, img)
             else:
                 img = dump[b, :3]  # (3, H, W)
                 img = img.transpose((1, 2, 0))
-                filename = os.path.join(dump_dir, f'wav2lip_{hex}_real_{b}.jpg')
+                filename = os.path.join(
+                    dump_dir, f'wav2lip_{hex}_real_{b}.jpg')
                 cv2.imwrite(filename, img)
 
                 img = dump[b, 3:]  # (3, H, W)
                 img = img.transpose((1, 2, 0))
-                filename = os.path.join(dump_dir, f'wav2lip_{hex}_fake_{b}.jpg')
+                filename = os.path.join(
+                    dump_dir, f'wav2lip_{hex}_fake_{b}.jpg')
                 cv2.imwrite(filename, img)
 
     def forward(self, audio_sequences, face_sequences):
@@ -183,8 +195,10 @@ class Wav2Lip(nn.Module):
 
         input_dim_size = len(face_sequences.size())
         if input_dim_size > 4:
-            audio_sequences = audio_sequences.reshape((B * hp.syncnet_T, 1, hp.num_mels, hp.syncnet_mel_step_size))
-            face_sequences = face_sequences.reshape((B * hp.syncnet_T, 6, hp.img_size, hp.img_size))
+            audio_sequences = audio_sequences.reshape(
+                (B * hp.syncnet_T, 1, hp.num_mels, hp.syncnet_mel_step_size))
+            face_sequences = face_sequences.reshape(
+                (B * hp.syncnet_T, 6, hp.img_size, hp.img_size))
 
         # face_sequences: (B x T, 6, H, W)
         audio_embedding = self.audio_encoder(
@@ -203,10 +217,12 @@ class Wav2Lip(nn.Module):
         x = audio_embedding
         if input_dim_size > 4:
             # (B x T, 2048, 1, 1)
-            embedding = torch.cat([face_embedding, audio_embedding], dim=1).reshape((B * hp.syncnet_T, 2048))
+            embedding = torch.cat([face_embedding, audio_embedding], dim=1).reshape(
+                (B * hp.syncnet_T, 2048))
 
             # (B, T, 14, 2)
-            landmarks = self.landmarks_decoder(embedding).reshape((B, hp.syncnet_T, 14, 2))
+            landmarks = self.landmarks_decoder(
+                embedding).reshape((B, hp.syncnet_T, 14, 2))
         else:
             landmarks = None
 
@@ -226,122 +242,41 @@ class Wav2Lip(nn.Module):
         if input_dim_size > 4:
             x = x.reshape((B, hp.syncnet_T, 3, hp.half_img_size, hp.img_size))
 
-        return x, landmarks  # (B, T, 3, half_img_size, img_size), (B, T, 14, 2)
+        # (B, T, 3, half_img_size, img_size), (B, T, 14, 2)
+        return x, landmarks
 
 
 class Wav2Lip_disc_qual(nn.Module):
     def __init__(self):
         super(Wav2Lip_disc_qual, self).__init__()
 
-        n_layers = evaluate_conv_layers(hp.img_size) + 1
-        sequentials = []
-        FIXED_OUTPUT_CHANNELS = [32, 64, 128, 256, 512, 1024, 1024]
-        required_output_channels = FIXED_OUTPUT_CHANNELS[:(n_layers - 2)]
-        required_output_channels += [required_output_channels[-1]] * 2
-
-        last_face_x_size = hp.img_size // 2
-        last_face_y_size = hp.img_size
-
-        input_channels = 3
-        for i in range(n_layers):
-            if i == 0:
-                sequentials.append(
-                    nn.Sequential(nonorm_Conv2d(
-                        input_channels, required_output_channels[i], kernel_size=7, stride=1, padding=3))
-                )
-                last_face_x_size = evaluate_new_size_after_conv(
-                    last_face_x_size, 7, 1, 3)
-                last_face_y_size = evaluate_new_size_after_conv(
-                    last_face_y_size, 7, 1, 3)
-            elif i == 1:
-                sequentials.append(
-                    nn.Sequential(nonorm_Conv2d(input_channels, required_output_channels[i], kernel_size=5, stride=(1, 2), padding=2),
-                                  nonorm_Conv2d(required_output_channels[i], required_output_channels[i], kernel_size=5, stride=1, padding=2)),)
-
-                last_face_x_size = evaluate_new_size_after_conv(
-                    last_face_x_size, 5, 1, 2)
-                last_face_y_size = evaluate_new_size_after_conv(
-                    last_face_y_size, 5, 2, 2)
-                last_face_x_size = evaluate_new_size_after_conv(
-                    last_face_x_size, 5, 1, 2)
-                last_face_y_size = evaluate_new_size_after_conv(
-                    last_face_y_size, 5, 1, 2)
-            elif i < n_layers - 3:
-                sequentials.append(
-                    nn.Sequential(nonorm_Conv2d(input_channels, required_output_channels[i], kernel_size=5, stride=2, padding=2),
-                                  nonorm_Conv2d(required_output_channels[i], required_output_channels[i], kernel_size=5, stride=1, padding=2)))
-
-                last_face_x_size = evaluate_new_size_after_conv(
-                    last_face_x_size, 5, 2, 2)
-                last_face_y_size = evaluate_new_size_after_conv(
-                    last_face_y_size, 5, 2, 2)
-                last_face_x_size = evaluate_new_size_after_conv(
-                    last_face_x_size, 5, 1, 2)
-                last_face_y_size = evaluate_new_size_after_conv(
-                    last_face_y_size, 5, 1, 2)
-            elif i == n_layers - 1:
-                sequentials.append(
-                    nn.Sequential(nonorm_Conv2d(input_channels, required_output_channels[i], kernel_size=3, stride=1, padding=0),
-                                  nonorm_Conv2d(required_output_channels[i], required_output_channels[i], kernel_size=1, stride=1, padding=0)),
-                )
-                last_face_x_size = evaluate_new_size_after_conv(
-                    last_face_x_size, 3, 1, 0)
-                last_face_y_size = evaluate_new_size_after_conv(
-                    last_face_y_size, 3, 1, 0)
-                last_face_x_size = evaluate_new_size_after_conv(
-                    last_face_x_size, 1, 1, 0)
-                last_face_y_size = evaluate_new_size_after_conv(
-                    last_face_y_size, 1, 1, 0)
-            elif i == n_layers - 2:
-                sequentials.append(
-                    nn.Sequential(nonorm_Conv2d(input_channels, required_output_channels[i], kernel_size=3, stride=2, padding=1),
-                                  nonorm_Conv2d(required_output_channels[i], required_output_channels[i], kernel_size=3, stride=1, padding=1),),
-                )
-                last_face_x_size = evaluate_new_size_after_conv(
-                    last_face_x_size, 3, 2, 1)
-                last_face_y_size = evaluate_new_size_after_conv(
-                    last_face_y_size, 3, 2, 1)
-                last_face_x_size = evaluate_new_size_after_conv(
-                    last_face_x_size, 3, 1, 1)
-                last_face_y_size = evaluate_new_size_after_conv(
-                    last_face_y_size, 3, 1, 1)
-
-            else:
-                sequentials.append(
-                    nn.Sequential(nonorm_Conv2d(input_channels, required_output_channels[i], kernel_size=3, stride=2, padding=1),
-                                  nonorm_Conv2d(required_output_channels[i], required_output_channels[i], kernel_size=3, stride=1, padding=1)),
-                )
-                last_face_x_size = evaluate_new_size_after_conv(
-                    last_face_x_size, 3, 2, 1)
-                last_face_y_size = evaluate_new_size_after_conv(
-                    last_face_y_size, 3, 2, 1)
-                last_face_x_size = evaluate_new_size_after_conv(
-                    last_face_x_size, 3, 1, 1)
-                last_face_y_size = evaluate_new_size_after_conv(
-                    last_face_y_size, 3, 1, 1)
-            input_channels = required_output_channels[i]
-
-        self.face_encoder_blocks = nn.ModuleList(sequentials)
-        assert last_face_x_size == 1, last_face_x_size
-        assert last_face_y_size == 1, last_face_y_size
-        final_channels = input_channels
-
-        self.binary_pred = nn.Sequential(
-            nn.Conv2d(final_channels, 1, kernel_size=1, stride=1, padding=0), nn.Sigmoid())
-        self.label_noise = .0
-
-    # def get_lower_half(self, face_sequences):
-    #     return face_sequences[:, :, face_sequences.size(2)//2:]
+        self.face_encoder = nn.Sequential(
+            nonorm_Conv2d(3, 32, kernel_size=7, stride=1, padding=3),  # 96,192
+            nonorm_Conv2d(32, 64, kernel_size=5, stride=(1, 2), padding=2),  # 96,96
+            nonorm_Conv2d(64, 64, kernel_size=5, stride=1, padding=2),
+            nonorm_Conv2d(64, 128, kernel_size=5, stride=2, padding=2),    # 48,48
+            nonorm_Conv2d(128, 128, kernel_size=5, stride=1, padding=2),
+            nonorm_Conv2d(128, 256, kernel_size=5, stride=2, padding=2),   # 24,24
+            nonorm_Conv2d(256, 256, kernel_size=5, stride=1, padding=2),
+            nonorm_Conv2d(256, 512, kernel_size=3, stride=2, padding=1),       # 12,12
+            nonorm_Conv2d(512, 512, kernel_size=3, stride=1, padding=1),
+            nonorm_Conv2d(512, 512, kernel_size=3, stride=2, padding=1),     # 6,6
+            nonorm_Conv2d(512, 512, kernel_size=3, stride=1, padding=1),
+            nonorm_Conv2d(512, 512, kernel_size=3, stride=1, padding=0),     # 4, 4
+            nonorm_Conv2d(512, 1, kernel_size=1, stride=1, padding=0),
+            nn.Sigmoid(),
+        )
 
     def dump_faces(self, face_sequences, dump_dir):
         from uuid import uuid4
         import os
         import cv2
         import numpy as np
-        
+
         print("discriminator dump faces to dir", dump_dir)
         B = face_sequences.size(0)
-        dump = (face_sequences.reshape((B, hp.syncnet_T, 3, hp.half_img_size, hp.img_size)) * 255.).detach().cpu().numpy().astype(np.uint8)
+        dump = (face_sequences.reshape((B, hp.syncnet_T, 3, hp.half_img_size,
+                hp.img_size)) * 255.).detach().cpu().numpy().astype(np.uint8)
         hex = uuid4().hex
         for b in range(B):
             for t in range(6):
@@ -358,28 +293,26 @@ class Wav2Lip_disc_qual(nn.Module):
         B = face_sequences.size(0)
 
         # (B x T, 3, H, W)
-        face_sequences = face_sequences.reshape((B * hp.syncnet_T, 3, hp.half_img_size, hp.img_size))
+        face_sequences = face_sequences.reshape(
+            (B * hp.syncnet_T, 3, hp.half_img_size, hp.img_size))
         return face_sequences
 
     def forward_(self, half_face_sequences):
         x = self.to_2d(half_face_sequences)
-        for f in self.face_encoder_blocks:
-            x = f(x)
-        return x
+        return self.face_encoder(x)
 
     def perceptual_forward(self, false_half_face_sequences):
-        false_feats = self.forward_(false_half_face_sequences)
+        false_activation = self.forward_(false_half_face_sequences)
 
-        false_pred_loss = F.binary_cross_entropy(self.binary_pred(false_feats).view(len(false_feats), -1),
-                                                 torch.ones((len(false_feats), 1)).cuda(),
-                                                 reduction='none')
+        B = false_activation.size(0)
+
+        false_pred_loss = F.binary_cross_entropy(
+            false_activation, torch.ones((B, 1, 4, 4), device='cuda'), reduction='none').mean(2).mean(2).reshape((B,))
 
         return false_pred_loss
 
     def forward(self, half_face_sequences):
-        x = self.forward_(half_face_sequences)
-
-        return self.binary_pred(x).view(len(x), -1)
+        return self.forward_(half_face_sequences)
 
 
 inception_resize = torchvision.transforms.Resize((299, 299))
@@ -403,7 +336,8 @@ class InceptionV3_disc(torchvision.models.Inception3):
         B = face_sequences.size(0)
 
         # (B x T, 3, H, W)
-        face_sequences = face_sequences.reshape((B * hp.syncnet_T, 3, hp.half_img_size, hp.img_size))
+        face_sequences = face_sequences.reshape(
+            (B * hp.syncnet_T, 3, hp.half_img_size, hp.img_size))
         return face_sequences
 
     def forward_(self, half_face_sequences):

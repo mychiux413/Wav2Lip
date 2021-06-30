@@ -254,16 +254,16 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
             pred = disc(half_gt)
             disc_batch_size = pred.size(0)
-            y_real = torch.ones((disc_batch_size, 1),
+            y_real = torch.ones((disc_batch_size, 1, 4, 4),
                                 dtype=torch.float32, device=device)
             disc_real_loss = F.binary_cross_entropy(
-                pred, y_real, reduction='none')
+                pred, y_real, reduction='none').mean(2).mean(2)
 
             pred = disc(half_g.detach())
-            y_fake = torch.zeros((disc_batch_size, 1),
+            y_fake = torch.zeros((disc_batch_size, 1, 4, 4),
                                  dtype=torch.float32, device=device)
             disc_fake_loss = F.binary_cross_entropy(
-                pred, y_fake, reduction='none')
+                pred, y_fake, reduction='none').mean(2).mean(2)
 
             disc_loss = (disc_real_loss + disc_fake_loss) / K / 2.
             disc_loss = (disc_loss.reshape((B, hparams.syncnet_T)).mean(1) * weights).mean()
@@ -442,7 +442,7 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
 
         pred = disc(half_gt)
         disc_batch_size = pred.size(0)
-        y_real = torch.ones((disc_batch_size, 1),
+        y_real = torch.ones((disc_batch_size, 1, 4, 4),
                             dtype=torch.float32, device=device)
         disc_real_loss = F.binary_cross_entropy(
             pred, y_real)
@@ -450,7 +450,7 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         # g = torch.cat((g_zeros, half_g), dim=3)
 
         pred = disc(half_g)
-        y_fake = torch.zeros((disc_batch_size, 1),
+        y_fake = torch.zeros((disc_batch_size, 1, 4, 4),
                              dtype=torch.float32, device=device)
         disc_fake_loss = F.binary_cross_entropy(
             pred, y_fake)
