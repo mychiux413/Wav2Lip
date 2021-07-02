@@ -1,16 +1,40 @@
 from torch import nn, Tensor
 from torch.nn import functional as F
 import torch
+from torch.nn.modules.activation import LeakyReLU
+from torch.nn.modules.batchnorm import BatchNorm2d
 
-from w2l.models.conv import Conv2d
+from w2l.models.conv import Conv2d, nonorm_Conv2d
 from w2l.hparams import hparams as hp
 from typing import Callable, List
 import torchvision
 
 
+resize = torchvision.transforms.Resize((48, 96))
+
+
 class SyncNet_color(nn.Module):
     def __init__(self):
         super(SyncNet_color, self).__init__()
+
+        # self.face_encoder = nn.Sequential(
+        #     nn.Conv2d(hp.syncnet_T * 3, 64, kernel_size=4, stride=2, padding=1),  # 96,192
+        #     nn.BatchNorm2d(64),
+        #     nn.GELU(),
+        #     nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),  # 96,96
+        #     nn.BatchNorm2d(128),
+        #     nn.GELU(),
+        #     nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1),
+        #     nn.BatchNorm2d(256),
+        #     nn.GELU(),
+        #     nn.Conv2d(256, 512, kernel_size=4, stride=1, padding=1),    # 48,48
+        #     nn.BatchNorm2d(512),
+        #     nn.GELU(),
+        #     nn.Conv2d(512, 512, kernel_size=4, stride=1, padding=1),
+        #     nn.BatchNorm2d(512),
+        #     nn.GELU(),
+        #     # nn.BatchNorm2d(512),
+        # )
 
         self.face_encoder = nn.Sequential(
             Conv2d(hp.syncnet_T * 3, 32, kernel_size=(7, 7), stride=1, padding=3),
@@ -32,9 +56,7 @@ class SyncNet_color(nn.Module):
             Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
             Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
 
-            Conv2d(512, 512, kernel_size=3, stride=2, padding=1),
-            Conv2d(512, 512, kernel_size=3, stride=1, padding=0),
-            Conv2d(512, 512, kernel_size=1, stride=1, padding=0),
+            nn.AvgPool2d((12, 12)),
             )
 
         self.audio_encoder = nn.Sequential(
@@ -77,9 +99,9 @@ class SyncNet_color(nn.Module):
         # audio_sequences: (B, 1, 80, 16)
 
         # self.dump_face(face_sequences, "/hdd/checkpoints/w2l/temp")
+        # face_sequences = resize(face_sequences)
 
         face_embedding = self.face_encoder(face_sequences)
-        face_embedding = face_embedding.mean(2).mean(2)
         audio_embedding = self.audio_encoder(audio_sequences)
 
         audio_embedding = audio_embedding.view(audio_embedding.size(0), -1)

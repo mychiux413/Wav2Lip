@@ -1,4 +1,6 @@
 from os.path import join
+from posix import XATTR_CREATE
+import torchvision
 from tqdm import tqdm
 import torch
 from torch import nn
@@ -51,7 +53,7 @@ def debug_dump(tensor, to_path='temp/temp.png'):
                         lname, batch_idx, t, ext), c[t])
 
 
-def save_sample_images(x, g, gt, global_step, checkpoint_dir, g_landmarks=None, gt_landmarks=None):
+def save_sample_images(x, g, gt, global_step, checkpoint_dir, g_landmarks=None, gt_landmarks=None, summary_writer=None):
     # g: (B, T, 3, H, W)
     # g_landmarks: (B, T, landmarks_points_len, 2)
     x = (x.detach().cpu().numpy().transpose(
@@ -72,6 +74,7 @@ def save_sample_images(x, g, gt, global_step, checkpoint_dir, g_landmarks=None, 
 
     collage = np.concatenate((refs, inps, g, gt), axis=-2)
     for batch_idx, (c, l_g, l_gt) in enumerate(zip(collage, g_landmarks, gt_landmarks)):
+        marked_images = []
         for t in range(len(c)):
             img = c[t]
             landmarks_g = l_g[t]
@@ -85,6 +88,13 @@ def save_sample_images(x, g, gt, global_step, checkpoint_dir, g_landmarks=None, 
                 pos_y = int(hparams.img_size * ratio_y)
                 img[(pos_y - 2):(pos_y + 2), (pos_x - 2):(pos_x + 2), 2] = 255
             cv2.imwrite('{}/{}_{}.jpg'.format(folder, batch_idx, t), c[t])
+            marked_images.append(img)
+        if summary_writer is not None:
+            marked_images = np.concatenate(marked_images, axis=0)[:, :, ::-1].astype(np.float) / 255.0
+            marked_images = np.expand_dims(marked_images, 0)
+            marked_images = torch.from_numpy(marked_images).transpose(1, 3).transpose(2, 3)
+            grid = torchvision.utils.make_grid(marked_images)
+            summary_writer.add_image('samples_step{:09d}/{:02d}'.format(global_step, batch_idx), grid, 0)
 
 
 logloss = nn.BCELoss(reduction='none')
@@ -203,6 +213,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             syncnet.eval()
 
             x = x.to(device)
+            half_x = x[:, :, :, hparams.half_img_size:]
             mel = mel.to(device)
             indiv_mels = indiv_mels.to(device)
             gt = gt.to(device)
@@ -218,9 +229,20 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
             half_gt = gt[:, :, :, half_img_size:]
 
+            sync_real_loss = get_sync_loss(
+                syncnet, mel, half_gt, expect_true=True) * weights
+            sync_fake_loss = get_sync_loss(
+                syncnet, mel, half_g.detach(), expect_true=False) * weights
+
+            sync_train_loss = (sync_real_loss + sync_fake_loss) / K / 2.
+            sync_train_loss = sync_train_loss.mean()
+            # sync_train_loss.backward()
+
             sync_loss = get_sync_loss(syncnet, mel, half_g)
 
-            perceptual_loss = disc.perceptual_forward(half_g)
+            sync_loss = torch.maximum(sync_loss * weights - sync_real_loss, torch.zeros((B,), device=device, dtype=torch.float32))
+
+            perceptual_loss = disc.perceptual_forward(half_g, half_x)
             perceptual_loss = perceptual_loss.reshape((B, hparams.syncnet_T)).mean(1)
 
             # masks_for_g = masks.permute((0, 2, 1, 3, 4))
@@ -252,15 +274,15 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                 optimizer.step()
                 optimizer.zero_grad()
 
-            pred = disc(half_gt)
+            pred = disc(half_gt, half_x)
             disc_batch_size = pred.size(0)
-            y_real = torch.ones((disc_batch_size, 1, 4, 4),
+            y_real = torch.ones((disc_batch_size, 1, 10, 22),
                                 dtype=torch.float32, device=device)
             disc_real_loss = F.binary_cross_entropy(
                 pred, y_real, reduction='none').mean(2).mean(2)
 
-            pred = disc(half_g.detach())
-            y_fake = torch.zeros((disc_batch_size, 1, 4, 4),
+            pred = disc(half_g.detach(), half_x)
+            y_fake = torch.zeros((disc_batch_size, 1, 10, 22),
                                  dtype=torch.float32, device=device)
             disc_fake_loss = F.binary_cross_entropy(
                 pred, y_fake, reduction='none').mean(2).mean(2)
@@ -268,15 +290,6 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             disc_loss = (disc_real_loss + disc_fake_loss) / K / 2.
             disc_loss = (disc_loss.reshape((B, hparams.syncnet_T)).mean(1) * weights).mean()
             disc_loss.backward()
-
-            sync_real_loss = get_sync_loss(
-                syncnet, mel, half_gt, expect_true=True) * weights
-            sync_fake_loss = get_sync_loss(
-                syncnet, mel, half_g.detach(), expect_true=False) * weights
-
-            sync_train_loss = (sync_real_loss + sync_fake_loss) / K / 2.
-            sync_train_loss = sync_train_loss.mean()
-            # sync_train_loss.backward()
 
             if global_step % K == 0:
                 torch.nn.utils.clip_grad_norm_(
@@ -293,7 +306,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                 save_sample_images(x, g, gt, global_step,
                                    checkpoint_dir,
                                    landmarks_g,
-                                   landmarks_gt)
+                                   landmarks_gt,
+                                   summary_writer)
 
             # Logs
             global_step += 1
@@ -427,6 +441,7 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         syncnet.eval()
 
         x = x.to(device)
+        half_x = x[:, :, :, hparams.half_img_size:]
         mel = mel.to(device)
         indiv_mels = indiv_mels.to(device)
         gt = gt.to(device)
@@ -440,28 +455,29 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         # masks = masks.to(device)
         half_gt = gt[:, :, :, half_img_size:]
 
-        pred = disc(half_gt)
+        pred = disc(half_gt, half_x)
         disc_batch_size = pred.size(0)
-        y_real = torch.ones((disc_batch_size, 1, 4, 4),
+        y_real = torch.ones((disc_batch_size, 1, 10, 22),
                             dtype=torch.float32, device=device)
         disc_real_loss = F.binary_cross_entropy(
             pred, y_real)
         # g_zeros = torch.zeros_like(half_g)
         # g = torch.cat((g_zeros, half_g), dim=3)
 
-        pred = disc(half_g)
-        y_fake = torch.zeros((disc_batch_size, 1, 4, 4),
+        pred = disc(half_g, half_x)
+        y_fake = torch.zeros((disc_batch_size, 1, 10, 22),
                              dtype=torch.float32, device=device)
         disc_fake_loss = F.binary_cross_entropy(
             pred, y_fake)
 
-        sync_loss = get_sync_loss(syncnet, mel, half_g)
-
         sync_real_loss = get_sync_loss(syncnet, mel, half_gt, expect_true=True)
         sync_fake_loss = get_sync_loss(
             syncnet, mel, half_g.detach(), expect_true=False)
+        sync_loss = get_sync_loss(syncnet, mel, half_g)
 
-        perceptual_loss = disc.perceptual_forward(half_g)
+        sync_loss = torch.maximum(sync_loss * weights - sync_real_loss, torch.zeros((B,), dtype=torch.float32, device=device))
+
+        perceptual_loss = disc.perceptual_forward(half_g, half_x)
         perceptual_loss = perceptual_loss.reshape((B, hparams.syncnet_T)).mean(1)
 
         # masks_for_g = masks.permute((0, 2, 1, 3, 4))
@@ -630,6 +646,8 @@ def main(args=None):
                             help='Use InceptionV3 Network as discriminator', action='store_true')
         parser.add_argument('--shufflenet',
                             help='Use ShuffleNetV2 Network as syncnet', action='store_true')
+        parser.add_argument('--use_syncnet_weights',
+                            help='Use Syncnet Weights for training', action='store_true')
         parser.add_argument('--logdir',
                             help='Tensorboard logdir', default=None, type=str)
         args = parser.parse_args()
@@ -643,6 +661,7 @@ def main(args=None):
         logdir = args.logdir
     print("log at: {}".format(logdir))
     summary_writer = SummaryWriter(logdir)
+    summary_writer.add_text("parameters", hparams.to_json())
 
     if args.hparams is None:
         hparams_dump_path = os.path.join(
@@ -658,14 +677,16 @@ def main(args=None):
         limit=args.train_limit,
         filelists_dir=args.filelists_dir,
         img_augment=hparams.img_augment,
-        inner_shuffle=False)
+        inner_shuffle=False,
+        use_syncnet_weights=args.use_syncnet_weights)
     test_dataset = Wav2LipDataset(
         'val', args.data_root,
         sampling_half_window_size_seconds=hparams.sampling_half_window_size_seconds,
         img_augment=False,
         limit=300,  # val steps
         filelists_dir=args.filelists_dir,
-        inner_shuffle=False)
+        inner_shuffle=False,
+        use_syncnet_weights=False)
 
     def worker_init_fn(i):
         seed = int(time()) + i * 100
