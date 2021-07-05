@@ -1,7 +1,7 @@
 import os
 import argparse
 from w2l.hparams import hparams as hp
-from w2l.utils import detect_face_and_dump_from_image, detect_face_and_dump_from_video, generate_video
+from w2l.utils import detect_face_and_dump_from_image, detect_face_and_dump_from_video, generate_video, demo
 from w2l.utils.env import use_cuda
 
 
@@ -59,6 +59,10 @@ def main():
                         help='Specify output fps', default=None)
     parser.add_argument('--output_crf', type=int,
                         help='Specify output crf', default=0)
+    parser.add_argument('--syncnet', type=str, required=False,
+                        default=None, help='syncnet model')
+    parser.add_argument('--disc', type=str, required=False,
+                        default=None, help='discriminator')
 
     args = parser.parse_args()
     if not os.path.isfile(args.face):
@@ -77,10 +81,17 @@ def main():
             args.face, temp_face_dir, device, hp.img_size, args.face_det_batch_size,
             pads=args.pads, box=args.box, smooth=not args.nosmooth, smooth_size=args.smooth_size)
 
-    generate_video(config_path, args.audio, args.checkpoint_path, args.outfile,
-                   batch_size=args.wav2lip_batch_size, num_mels=hp.num_mels,
-                   mel_step_size=hp.syncnet_mel_step_size, sample_rate=hp.sample_rate,
-                   output_fps=args.output_fps, output_crf=args.output_crf)
+    if args.syncnet is None and args.disc is None:
+        generate_video(config_path, args.audio, args.checkpoint_path, args.outfile,
+                       batch_size=args.wav2lip_batch_size, num_mels=hp.num_mels,
+                       mel_step_size=hp.syncnet_mel_step_size, sample_rate=hp.sample_rate,
+                       output_fps=args.output_fps, output_crf=args.output_crf)
+    else:
+        demo(config_path, args.audio, args.checkpoint_path, args.outfile,
+             args.disc, args.syncnet,
+             batch_size=args.wav2lip_batch_size, num_mels=hp.num_mels,
+             mel_step_size=hp.syncnet_mel_step_size, sample_rate=hp.sample_rate,
+             output_fps=args.output_fps, output_crf=args.output_crf)
 
 
 if __name__ == '__main__':

@@ -97,7 +97,13 @@ class LandMarks(dict):
         return np.load(path, allow_pickle=True).tolist()
 
 
-def cal_mouth_mask_pos(mouth_landmarks, img_height, img_width, x1_mask_edge, x2_mask_edge):
+def cal_mouth_mask_pos(landmarks, img_height, img_width, x1_mask_edge, x2_mask_edge):
+    mouth_landmarks = landmarks[48:]
+    y_nose = landmarks[33, 1]
+    y_chin = landmarks[8, 1]
+
+    y1_mask_edge = int(y_nose * img_height + 20)
+    y2_mask_edge = int(y_chin * img_height - 20)
     # print(49, 0.5 - mouth_landmarks[0, 0], mouth_landmarks[0, 1], 55, mouth_landmarks[6, 0] - 0.5, mouth_landmarks[6, 1])
     mouth_x1 = min(mouth_landmarks[:, 0]) * img_width
     mouth_x2 = max(mouth_landmarks[:, 0]) * img_width
@@ -114,8 +120,10 @@ def cal_mouth_mask_pos(mouth_landmarks, img_height, img_width, x1_mask_edge, x2_
     mouth_x2 = min(mouth_x2, img_width)
     mouth_y1 = max(img_height // 2, int(mouth_y1 - mouth_height *
                                         hparams.expand_mouth_height_ratio - 5))
+    mouth_y1 = min(mouth_y1, y1_mask_edge)
     mouth_y2 = min(img_height, int(
         mouth_y2 + mouth_height * hparams.expand_mouth_height_ratio + 5))
+    mouth_y2 = max(mouth_y2, y2_mask_edge)
 
     return mouth_x1, mouth_x2, mouth_y1, mouth_y2
 
@@ -298,9 +306,8 @@ class Dataset(object):
         landmarks = [self.landmarks[vidname][fname] for fname in fnames]
         # masks = []
         for i, landmark in enumerate(landmarks):
-            mouth_landmark = landmark[48:]
             mouth_x1, mouth_x2, mouth_y1, mouth_y2 = cal_mouth_mask_pos(
-                mouth_landmark,
+                landmark,
                 self.img_size,
                 self.img_size,
                 self.x1_mask_edge,

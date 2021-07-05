@@ -235,9 +235,8 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
                     len(frames), -1, 2).cpu().numpy()
             for img_path, face_path, face, (x1, y1, x2, y2), landmarks in zip(img_paths, face_paths, faces, cali_rects, landmarks_batch):
                 # **** mouth *****
-                mouth_landmarks = landmarks[48:]
                 mouth_x1, mouth_x2, mouth_y1, mouth_y2 = cal_mouth_mask_pos(
-                    mouth_landmarks,
+                    landmarks,
                     hparams.img_size,
                     hparams.img_size,
                     x1_edge,

@@ -366,16 +366,16 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                             "discriminator is trustable now, set it back to:", original_disc_wt)
                         hparams.set_hparam('disc_wt', original_disc_wt)
                 elif running_l1_loss.item() / next_step > 0.05 and hparams.disc_wt != 0.001 and _disc > 0.8:
-                    print("discriminator is not trustable, set weight to 0.")
+                    print("discriminator is not trustable, set weight to 0.001")
                     hparams.set_hparam('disc_wt', 0.001)
 
-                if _sync_real < 0.4 and _sync < 1.0:
+                if _sync_real < 0.4 and _sync < 0.35:
                     if hparams.syncnet_wt != origin_syncnet_wt:
                         print(
                             "syncnet is trustable now, set it back to:", origin_syncnet_wt)
                         hparams.set_hparam('syncnet_wt', origin_syncnet_wt)
                 elif running_l1_loss.item() / next_step > 0.05 and hparams.syncnet_wt != 0.001 and _sync_train > 0.8:
-                    print("syncnet is not trustable, set weight to 0.")
+                    print("syncnet is not trustable, set weight to 0.001")
                     hparams.set_hparam('syncnet_wt', 0.001)
 
                 prog_bar.set_description(
