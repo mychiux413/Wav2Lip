@@ -102,8 +102,8 @@ def cal_mouth_mask_pos(landmarks, img_height, img_width, x1_mask_edge, x2_mask_e
     y_nose = landmarks[33, 1]
     y_chin = landmarks[8, 1]
 
-    y1_mask_edge = int(y_nose * img_height + 20)
-    y2_mask_edge = int(y_chin * img_height - 20)
+    y1_mask_edge = int(y_nose * img_height)
+    y2_mask_edge = int(y_chin * img_height - 10)
     # print(49, 0.5 - mouth_landmarks[0, 0], mouth_landmarks[0, 1], 55, mouth_landmarks[6, 0] - 0.5, mouth_landmarks[6, 1])
     mouth_x1 = min(mouth_landmarks[:, 0]) * img_width
     mouth_x2 = max(mouth_landmarks[:, 0]) * img_width

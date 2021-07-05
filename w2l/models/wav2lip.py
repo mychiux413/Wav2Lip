@@ -54,12 +54,12 @@ class Wav2Lip(nn.Module):
                                  padding=1, residual=True),
                           Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True)),
 
-            nn.Sequential(Conv2d(256, 384, kernel_size=3, stride=2, padding=1),       # 6,6
-                          Conv2d(384, 384, kernel_size=3, stride=1,
+            nn.Sequential(Conv2d(256, 512, kernel_size=3, stride=2, padding=1),       # 6,6
+                          Conv2d(512, 512, kernel_size=3, stride=1,
                                  padding=1, residual=True),
-                          Conv2d(384, 384, kernel_size=3, stride=1, padding=1, residual=True)),
+                          Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True)),
 
-            nn.Sequential(Conv2d(384, 512, kernel_size=3, stride=2, padding=1),     # 3,3
+            nn.Sequential(Conv2d(512, 512, kernel_size=3, stride=2, padding=1),     # 3,3
                           Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),),
 
             nn.Sequential(Conv2d(512, 512, kernel_size=3, stride=1, padding=0),     # 1, 1
@@ -99,34 +99,34 @@ class Wav2Lip(nn.Module):
                                  padding=1, residual=True),
                           Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),),  # 6, 6    (+512)
 
-            nn.Sequential(Conv2dTranspose(896, 448, kernel_size=3, stride=2, padding=1, output_padding=1),
-                          Conv2d(448, 448, kernel_size=3, stride=1,
+            nn.Sequential(Conv2dTranspose(1024, 512, kernel_size=3, stride=2, padding=1, output_padding=1),
+                          Conv2d(512, 512, kernel_size=3, stride=1,
                                  padding=1, residual=True),
-                          Conv2d(448, 448, kernel_size=3, stride=1, padding=1, residual=True),),  # 12, 12  (+384)
+                          Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),),  # 12, 12  (+512)
 
-            nn.Sequential(Conv2dTranspose(704, 352, kernel_size=3, stride=2, padding=1, output_padding=1),
-                          Conv2d(352, 352, kernel_size=3, stride=1,
+            nn.Sequential(Conv2dTranspose(768, 384, kernel_size=3, stride=2, padding=1, output_padding=1),
+                          Conv2d(384, 384, kernel_size=3, stride=1,
                                  padding=1, residual=True),
-                          Conv2d(352, 352, kernel_size=3, stride=1, padding=1, residual=True),),  # 24, 24  (+256)
+                          Conv2d(384, 384, kernel_size=3, stride=1, padding=1, residual=True),),  # 24, 24  (+256)
 
-            nn.Sequential(Conv2dTranspose(480, 240, kernel_size=3, stride=2, padding=1, output_padding=1),
-                          Conv2d(240, 240, kernel_size=3, stride=1,
+            nn.Sequential(Conv2dTranspose(512, 256, kernel_size=3, stride=2, padding=1, output_padding=1),
+                          Conv2d(256, 256, kernel_size=3, stride=1,
                                  padding=1, residual=True),
-                          Conv2d(240, 240, kernel_size=3, stride=1, padding=1, residual=True),),  # 48, 48  (+128)
+                          Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),),  # 48, 48  (+128)
 
-            nn.Sequential(Conv2dTranspose(304, 152, kernel_size=3, stride=2, padding=1, output_padding=1),
-                          Conv2d(152, 152, kernel_size=3, stride=1,
+            nn.Sequential(Conv2dTranspose(320, 160, kernel_size=3, stride=2, padding=1, output_padding=1),
+                          Conv2d(160, 160, kernel_size=3, stride=1,
                                  padding=1, residual=True),
-                          Conv2d(152, 152, kernel_size=3, stride=1, padding=1, residual=True),),  # 96,96  (+64)
+                          Conv2d(160, 160, kernel_size=3, stride=1, padding=1, residual=True),),  # 96,96  (+64)
 
 
-            nn.Sequential(Conv2dTranspose(184, 92, kernel_size=3, stride=2, padding=1, output_padding=1),
-                          Conv2d(92, 92, kernel_size=3, stride=1,
+            nn.Sequential(Conv2dTranspose(192, 96, kernel_size=3, stride=2, padding=1, output_padding=1),
+                          Conv2d(96, 96, kernel_size=3, stride=1,
                                  padding=1, residual=True),
-                          Conv2d(92, 92, kernel_size=3, stride=1, padding=1, residual=True),), ])   # 192,192  (+32)
+                          Conv2d(96, 96, kernel_size=3, stride=1, padding=1, residual=True),), ])   # 192,192  (+32)
 
-        self.output_block = nn.Sequential(Conv2d(108, 32, kernel_size=3, stride=1, padding=1),  # (+16)
-                                          nn.Conv2d(32, 3, kernel_size=1,
+        self.output_block = nn.Sequential(Conv2d(112, 56, kernel_size=3, stride=1, padding=1),  # (+16)
+                                          nn.Conv2d(56, 3, kernel_size=1,
                                                     stride=1, padding=0),
                                           nn.Sigmoid())
         self.landmarks_decoder = nn.Sequential(

@@ -141,7 +141,7 @@ hparams = HParams(
 
     # mobilefacenet
     mobilefacenet_model_path='checkpoints/mobilefacenet_model_best.pth.tar',
-    expand_mouth_width_ratio=0.6,
+    expand_mouth_width_ratio=0.8,
     expand_mouth_height_ratio=0.7,
     x1_mouth_mask_edge=0.25,
     x2_mouth_mask_edge=0.75,
