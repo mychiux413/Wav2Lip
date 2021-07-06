@@ -17,6 +17,7 @@ from glob import glob
 from w2l.hparams import hparams as hp
 
 from w2l import face_detection
+from w2l.utils.face_detect import Smoothier, square_positions
 from w2l.utils.stream import stream_video_as_batch
 from w2l.utils.facenet import load_facenet_model
 from w2l.utils.env import device
@@ -64,6 +65,7 @@ def process_video_file(fa, vfile, args):
     resize_factor_height = height / float(target_height)
     resize_factor_width = width / float(target_width)
 
+    smoothier = None
     i = -1
     for images in batches:
         if should_resize:
@@ -80,12 +82,21 @@ def process_video_file(fa, vfile, args):
                 continue
 
             x1, y1, x2, y2 = f
+
             if should_resize:
                 x1 = int(np.round(x1 * resize_factor_width))
                 x2 = int(np.round(x2 * resize_factor_width))
                 y1 = int(np.round(y1 * resize_factor_height))
                 y2 = int(np.round(y2 * resize_factor_height))
             y2 = min(height, y2 + 20)  # add chin
+
+            if smoothier is None:
+                smoothier = Smoothier(x1, x2, y1, y2, T=hp.syncnet_T)
+            else:
+                x1, x2, y1, y2 = smoothier.smooth(x1, x2, y1, y2)
+
+            x1, x2, y1, y2 = square_positions(x1, x2, y1, y2)
+
             cv2.imwrite(
                 os.path.join(fulldir, '{}.jpg'.format(i)),
                 images[j][y1:y2, x1:x2], [int(cv2.IMWRITE_JPEG_QUALITY), 100],
@@ -168,7 +179,8 @@ def process_blur_score(job):
     for fname in filter(lambda name: name.endswith('.jpg'), os.listdir(fulldir)):
         path = os.path.join(fulldir, fname)
         img = cv2.imread(path)
-        score = cal_blur(img)
+        half_img = img[img.shape[0] // 2:]
+        score = cal_blur(half_img)
         config[fname] = score
     np.save(config_path, config, allow_pickle=True)
     return True

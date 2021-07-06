@@ -31,6 +31,22 @@ class Smoothier:
         return self.x1, self.x2, self.y1, self.y2
 
 
+def square_positions(x1, x2, y1, y2):
+    w = x2 - x1
+    h = y2 - y1
+    if w > h:
+        dh = w - h
+        half_dh = dh // 2
+        y1 = y1 - half_dh
+        y2 = y2 + (dh - half_dh)
+    elif h > w:
+        dw = h - w
+        half_dw = dw // 2
+        x1 = x1 - half_dw
+        x2 = x2 + (dw - half_dw)
+    return x1, x2, y1, y2
+
+
 def detect_face_and_dump_from_image(img_path, dump_dir, device, face_size, fps=25, pads=None, box=None):
     if pads is None:
         pads = (0, 0, 0, 0)
@@ -205,6 +221,8 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
                         # mouth_x1, mouth_x2, mouth_y1, mouth_y2 = mouth_smoothier.smooth(
                         #     x1=mouth_x1, x2=mouth_x2, y1=mouth_y1, y2=mouth_y2)
 
+                x1, x2, y1, y2 = square_positions(x1, x2, y1, y2)
+
                 cali_rects.append((x1, y1, x2, y2))
                 face_paths.append(face_path)
                 img_paths.append(img_path)
@@ -239,8 +257,6 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
                     landmarks,
                     hparams.img_size,
                     hparams.img_size,
-                    x1_edge,
-                    x2_edge,
                     )
                 if smooth:
                     if mouth_smoothier is None:

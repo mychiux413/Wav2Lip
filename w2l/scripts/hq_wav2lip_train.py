@@ -17,7 +17,7 @@ from w2l.utils.env import use_cuda, device
 from w2l.models import SyncNet_color as SyncNet
 from w2l.models import SyncNet_shuffle_color
 from w2l.models import Wav2Lip, Wav2Lip_disc_qual, InceptionV3_disc
-from w2l.utils.loss import ms_ssim_loss
+from w2l.utils.loss import ms_ssim_loss, cal_blur
 from torch.utils.tensorboard import SummaryWriter
 import random
 from time import time
@@ -132,6 +132,18 @@ def get_sync_loss(syncnet, mel, half_g, expect_true=True):
     return cosine_loss(a, v, y).reshape((B,))
 
 
+def get_blurs_loss(half_g, blurs_gt, B):
+
+    half_g_for_cv2 = (half_g.permute((0, 1, 3, 4, 2)).reshape(
+        (B * hparams.syncnet_T, hparams.half_img_size, hparams.img_size, 3)) * 255.).detach().cpu().numpy().astype(np.uint8)
+    blurs_g = list(map(cal_blur, half_g_for_cv2))
+
+    blurs_gt = blurs_gt.mean(1)
+    blurs_g = torch.FloatTensor(np.array(blurs_g, np.float)).to(device).reshape((B, hparams.syncnet_T)).mean(1)
+
+    return torch.maximum(torch.zeros((B,), device=device, dtype=torch.float32), blurs_g - blurs_gt)
+
+
 l2loss = nn.MSELoss(reduction='none')
 
 
@@ -188,9 +200,10 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
         running_l1_loss, running_ssim_loss, running_disc_loss = 0., 0., 0.
         running_sync_real_loss = 0.
         running_landmarks_loss = 0.
+        running_blurs_loss = 0.
 
         prog_bar = tqdm(enumerate(train_data_loader))
-        for step, (x, indiv_mels, mel, gt, landmarks_gt, weights) in prog_bar:
+        for step, (x, indiv_mels, mel, gt, landmarks_gt, blurs_gt, weights) in prog_bar:
             B = x.size(0)
             if B == 1:
                 continue
@@ -206,6 +219,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             gt = gt.to(device)
             landmarks_gt = landmarks_gt.to(device)
             weights = weights.to(device)
+            blurs_gt = blurs_gt.to(device)
             # masks = masks.to(device)
             half_g, landmarks_g = model(indiv_mels, x)
             upper_gt = gt[:, :, :, :half_img_size]
@@ -218,12 +232,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
             sync_real_loss = get_sync_loss(
                 syncnet, mel, half_gt, expect_true=True) * weights
-            # sync_fake_loss = get_sync_loss(
-            #     syncnet, mel, half_g.detach(), expect_true=False) * weights
 
-            # sync_train_loss = (sync_real_loss + sync_fake_loss) / K / 2.
-            # sync_train_loss = sync_train_loss.mean()
-            # sync_train_loss.backward()
+            blurs_loss = get_blurs_loss(half_g, blurs_gt, B)
 
             sync_loss = get_sync_loss(syncnet, mel, half_g)
 
@@ -251,7 +261,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                 l1 + hparams.ssim_wt * ssim
 
             loss = (hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss +
-                    landmarks_loss * hparams.landmarks_wt + (1. - hparams.syncnet_wt - hparams.disc_wt) * rec_loss)
+                    landmarks_loss * hparams.landmarks_wt + (1. - hparams.syncnet_wt - hparams.disc_wt) * rec_loss +
+                    blurs_loss * hparams.blurs_wt)
             loss = (loss * weights / K).mean()
             loss.backward()
 
@@ -311,6 +322,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
             running_sync_real_loss += sync_real_loss.detach().mean()
             running_landmarks_loss += landmarks_loss.detach().mean()
+            running_blurs_loss += blurs_loss.detach().mean()
 
             if global_step == 1 or global_step % checkpoint_interval == 0:
                 save_checkpoint(
@@ -341,6 +353,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                 _sync_real = running_sync_real_loss.item() / next_step
 
                 _landmarks = running_landmarks_loss.item() / next_step
+                _blurs = running_blurs_loss.item() / next_step
 
                 if _disc < 0.7 and _perc < 1.0:
                     if hparams.disc_wt != original_disc_wt:
@@ -361,12 +374,13 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                     hparams.set_hparam('syncnet_wt', 0.001)
 
                 prog_bar.set_description(
-                    'L1: {:.3f}, SSIM: {:.3f}, Land: {:.4f}, Sync: {:.3f}, Percep: {:.3f} | Fake: {:.3f}, Real: {:.3f}, Disc: {:.3f} | SyncReal: {:.3f} | Target: {:.3f}'.format(
+                    'L1: {:.3f}, SSIM: {:.3f}, Land: {:.4f}, Sync: {:.3f}, Percep: {:.3f}, Blurs: {:.3f} | Fake: {:.3f}, Real: {:.3f}, Disc: {:.3f} | SyncReal: {:.3f} | Target: {:.3f}'.format(
                         _l1,
                         _ssim,
                         _landmarks,
                         _sync,
                         _perc,
+                        _blurs,
                         _disc_fake,
                         _disc_real,
                         _disc,
@@ -384,6 +398,8 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                         "Train/Gen/Target", _target, global_step)
                     summary_writer.add_scalar(
                         "Train/Gen/Land", _landmarks, global_step)
+                    summary_writer.add_scalar(
+                        "Train/Gen/Blurs", _blurs, global_step)
                     summary_writer.add_scalar(
                         "Train/Disc/Fake", _disc_fake, global_step)
                     summary_writer.add_scalar(
@@ -404,10 +420,10 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         running_perceptual_loss, running_target_loss, \
         running_l1_loss, running_ssim_loss, \
         running_sync_real_loss, \
-        running_landmarks_loss = [
-        ], [], [], [], [], [], [], [], [], []
+        running_landmarks_loss, running_blurs_loss = [
+        ], [], [], [], [], [], [], [], [], [], []
 
-    for step, (x, indiv_mels, mel, gt, landmarks_gt, weights) in enumerate((test_data_loader)):
+    for step, (x, indiv_mels, mel, gt, landmarks_gt, blurs_gt, weights) in enumerate((test_data_loader)):
         B = x.size(0)
         if B == 1:
             continue
@@ -422,6 +438,8 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         gt = gt.to(device)
         landmarks_gt = landmarks_gt.to(device)
         weights = weights.to(device)
+        blurs_gt = blurs_gt.to(device)
+
         half_g, landmarks_g = model(indiv_mels, x)
         upper_gt = gt[:, :, :, :hparams.half_img_size]
         g = torch.cat([upper_gt, half_g], dim=3)
@@ -447,6 +465,8 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
 
         sync_loss = torch.maximum(sync_loss * weights - sync_real_loss, torch.zeros((B,), dtype=torch.float32, device=device))
 
+        blurs_loss = get_blurs_loss(half_g, blurs_gt, B)
+
         perceptual_loss = disc.perceptual_forward(half_g, half_x)
         perceptual_loss = perceptual_loss.reshape((B, hparams.syncnet_T)).mean(1)
 
@@ -459,6 +479,7 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
 
         loss = hparams.syncnet_wt * sync_loss + hparams.disc_wt * perceptual_loss + \
             landmarks_loss * hparams.landmarks_wt + \
+            blurs_loss * hparams.blurs_wt + \
             (1. - hparams.syncnet_wt - hparams.disc_wt) * rec_loss
         loss = (loss * weights).mean()
 
@@ -478,24 +499,28 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         running_sync_real_loss.append(real)
         running_landmarks_loss.append(landmarks_loss.detach().mean())
 
+        running_blurs_loss.append(blurs_loss.detach().mean())
+
         if step > eval_steps:
             break
     _l1 = np.mean([loss.item() for loss in running_l1_loss])
     _ssim = np.mean([loss.item() for loss in running_ssim_loss])
     _sync = np.mean([loss.item() for loss in running_sync_loss])
     _perc = np.mean([loss.item() for loss in running_perceptual_loss])
+    _blurs = np.mean([loss.item() for loss in running_blurs_loss])
     _disc_fake = np.mean([loss.item() for loss in running_disc_fake_loss])
     _disc_real = np.mean([loss.item() for loss in running_disc_real_loss])
     _disc = np.mean([loss.item() for loss in running_disc_train_loss])
     _target = np.mean([loss.item() for loss in running_target_loss])
     _sync_real = np.mean([loss.item() for loss in running_sync_real_loss])
     _landmarks = np.mean([loss.item() for loss in running_landmarks_loss])
-    print('L1: {:.3f}, SSIM: {:.3f}, Land: {:.4f}, Sync: {:.3f}, Percep: {:.3f} | Fake: {:.3f}, Real: {:.3f}, Disc: {:.3f} | SyncReal: {:.3f} | Target: {:.3f}'.format(
+    print('L1: {:.3f}, SSIM: {:.3f}, Land: {:.4f}, Sync: {:.3f}, Percep: {:.3f}, Blurs: {:.3f} | Fake: {:.3f}, Real: {:.3f}, Disc: {:.3f} | SyncReal: {:.3f} | Target: {:.3f}'.format(
         _l1,
         _ssim,
         _landmarks,
         _sync,
         _perc,
+        _blurs,
         _disc_fake,
         _disc_real,
         _disc,
@@ -507,6 +532,7 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         summary_writer.add_scalar("Evaluation/Gen/Sync", _sync, global_step)
         summary_writer.add_scalar("Evaluation/Gen/Land", _landmarks, global_step)
         summary_writer.add_scalar("Evaluation/Gen/Percep", _perc, global_step)
+        summary_writer.add_scalar("Evaluation/Gen/Blurs", _blurs, global_step)
         summary_writer.add_scalar("Evaluation/Gen/Target", _target, global_step)
         summary_writer.add_scalar("Evaluation/Disc/Fake", _disc_fake, global_step)
         summary_writer.add_scalar("Evaluation/Disc/Real", _disc_real, global_step)

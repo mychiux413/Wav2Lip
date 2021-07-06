@@ -97,42 +97,59 @@ class LandMarks(dict):
         return np.load(path, allow_pickle=True).tolist()
 
 
-def cal_mouth_mask_pos(landmarks, img_height, img_width, x1_mask_edge, x2_mask_edge):
-    mouth_landmarks = landmarks[48:]
+class Blurs(dict):
+    def __setitem__(self, key, value):
+        self.__dict__[key] = value
+
+    def __getitem__(self, key):
+        path = self.__dict__[key]
+        return np.load(path, allow_pickle=True).tolist()
+
+
+def cal_mouth_mask_pos(landmarks, img_height, img_width):
+    # mouth_landmarks = landmarks[48:]
+    x1_mask_edge = landmarks[3, 0]
+    x2_mask_edge = landmarks[13, 0]
     y_nose = landmarks[33, 1]
     y_chin = landmarks[8, 1]
 
+    x1_mask_edge = int(x1_mask_edge * img_width + 5)
+    x2_mask_edge = int(x2_mask_edge * img_width - 5)
     y1_mask_edge = int(y_nose * img_height)
     y2_mask_edge = int(y_chin * img_height - 10)
-    # print(49, 0.5 - mouth_landmarks[0, 0], mouth_landmarks[0, 1], 55, mouth_landmarks[6, 0] - 0.5, mouth_landmarks[6, 1])
-    mouth_x1 = min(mouth_landmarks[:, 0]) * img_width
-    mouth_x2 = max(mouth_landmarks[:, 0]) * img_width
-    mouth_y1 = min(mouth_landmarks[:, 1]) * img_height
-    mouth_y2 = max(mouth_landmarks[:, 1]) * img_height
-    mouth_width = mouth_x2 - mouth_x1
-    mouth_height = mouth_y2 - mouth_y1
-    mouth_height = min(40, mouth_height)
-    mouth_x1 = min(x1_mask_edge, int(mouth_x1 - mouth_width *
-                                     hparams.expand_mouth_width_ratio - 5))
-    mouth_x1 = max(mouth_x1, 0)
-    mouth_x2 = max(x2_mask_edge, int(
-        mouth_x2 + mouth_width * hparams.expand_mouth_width_ratio + 5))
-    mouth_x2 = min(mouth_x2, img_width)
-    mouth_y1 = max(img_height // 2, int(mouth_y1 - mouth_height *
-                                        hparams.expand_mouth_height_ratio - 5))
-    mouth_y1 = min(mouth_y1, y1_mask_edge)
-    mouth_y2 = min(img_height, int(
-        mouth_y2 + mouth_height * hparams.expand_mouth_height_ratio + 5))
-    mouth_y2 = max(mouth_y2, y2_mask_edge)
+
+    mouth_x1, mouth_x2, mouth_y1, mouth_y2 = x1_mask_edge, x2_mask_edge, y1_mask_edge, y2_mask_edge
+
+    mouth_x1 = max(0, mouth_x1)
+    mouth_x2 = min(img_width, mouth_x2)
+    mouth_y1 = max(img_height // 2, mouth_y1)
+    mouth_y2 = min(img_height, mouth_y2)
 
     return mouth_x1, mouth_x2, mouth_y1, mouth_y2
 
+# def cal_mouth_contour_mask(landmarks, img_height, img_width):
+#     # mouth_landmarks = landmarks[48:]
+#     delta_face_width = (landmarks[14, 0] - landmarks[2, 0]) * 0.05
+#     delta_face_height = (landmarks[33, 1] - landmarks[8, 1]) * 0.1
+#     mouth_contours = [
+#         [landmarks[2, 0] + delta_face_width, landmarks[2, 1]],
+#         [landmarks[5, 0] + delta_face_width, landmarks[2, 1]],
+#         [landmarks[8, 0], landmarks[2, 1] - delta_face_height],
+#         [landmarks[11, 0] - delta_face_width, landmarks[2, 1]],
+#         [landmarks[14, 0] - delta_face_width, landmarks[2, 1]],
+#         [landmarks[33, 0], landmarks[2, 1] + delta_face_height],
+#     ]
+#     mouth_contours = np.array(mouth_contours, dtype=np.float)
+#     mouth_contours[:, 1] = np.maximum(mouth_contours[:, 1], 0.5)
+
+#     return mouth_contours
 
 class Dataset(object):
     valid_sampling_width = hparams.fps + 1
     syncnet_T = hparams.syncnet_T
     syncnet_mel_step_size = hparams.syncnet_mel_step_size
     use_landmarks = True
+    use_blurs = True
 
     def __init__(self, split, data_root, inner_shuffle=True,
                  limit=0, sampling_half_window_size_seconds=2.0,
@@ -195,6 +212,15 @@ class Dataset(object):
             assert vidname in self.orig_mels, "vidname {} is in landmarks but not in orig_mels".format(
                 vidname)
 
+        self.blurs = Blurs()
+        if self.use_blurs:
+            print("load blurs")
+            for vidname in self.all_videos:
+                self.blurs[vidname] = join(vidname, "blur.npy")
+        for vidname in self.blurs.keys():
+            assert vidname in self.orig_mels, "vidname {} is in blurs but not in orig_mels".format(
+                vidname)
+
         self.img_size = hparams.img_size
         self.half_img_size = int(self.img_size / 2)
         self.x1_mask_edge = int(self.img_size * hparams.x1_mouth_mask_edge)
@@ -227,12 +253,15 @@ class Dataset(object):
         start_id = self.get_frame_id(start_frame)
 
         window_fnames = []
+        window_base_fnames = []
         for frame_id in range(start_id, start_id + self.syncnet_T):
-            frame = join(vidname, '{}.jpg'.format(frame_id))
+            fname = '{}.jpg'.format(frame_id)
+            frame = join(vidname, fname)
             if not isfile(frame):
-                return None
+                return None, None
             window_fnames.append(frame)
-        return window_fnames
+            window_base_fnames.append(fname)
+        return window_fnames, window_base_fnames
 
     def read_window(self, window_fnames):
         # output: [(H, W, 3), ...]
@@ -301,17 +330,17 @@ class Dataset(object):
                self.fringe_x1:self.fringe_x2] = 0.
         return window
 
-    def mask_mouth(self, window, vidname, window_fnames):
-        fnames = list(map(os.path.basename, window_fnames))
-        landmarks = [self.landmarks[vidname][fname] for fname in fnames]
+    def get_blurs(self, vidname, window_base_fnames):
+        return [self.blurs[vidname][fname] for fname in window_base_fnames]
+
+    def mask_mouth(self, window, vidname, window_base_fnames):
+        landmarks = [self.landmarks[vidname][fname] for fname in window_base_fnames]
         # masks = []
         for i, landmark in enumerate(landmarks):
             mouth_x1, mouth_x2, mouth_y1, mouth_y2 = cal_mouth_mask_pos(
                 landmark,
                 self.img_size,
-                self.img_size,
-                self.x1_mask_edge,
-                self.x2_mask_edge)
+                self.img_size)
 
             if window is not None:
                 window[i, :, mouth_y1:mouth_y2, mouth_x1:mouth_x2] = 0.
@@ -356,8 +385,8 @@ class Wav2LipDataset(Dataset):
             img_name, wrong_img_name = self.sample_right_wrong_images(
                 img_names)
 
-            window_fnames = self.get_window(img_name, vidname)
-            wrong_window_fnames = self.get_window(wrong_img_name, vidname)
+            window_fnames, window_base_fnames = self.get_window(img_name, vidname)
+            wrong_window_fnames, _ = self.get_window(wrong_img_name, vidname)
             if window_fnames is None or wrong_window_fnames is None:
                 idx += 1
                 continue
@@ -398,7 +427,7 @@ class Wav2LipDataset(Dataset):
             y = cat[(self.syncnet_T * 2):, :, :, :]
 
             window, landmarks = self.mask_mouth(
-                window, vidname, window_fnames)
+                window, vidname, window_base_fnames)
 
             x = torch.cat([window, wrong_window], axis=1)
 
@@ -406,13 +435,16 @@ class Wav2LipDataset(Dataset):
             indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)
             landmarks = torch.FloatTensor(landmarks)
 
+            blurs = self.get_blurs(vidname, window_base_fnames)
+            blurs = torch.FloatTensor(blurs)
+
             data_weight = self.get_data_weight(vidname)
 
             # x: (T, 6, H, W)
             # y: (T, 3, H, W)
             # indiv_mels: (T, 1, 80, 16)
             # mel: (1, 80, 16)
-            return x, indiv_mels, mel, y, landmarks, data_weight
+            return x, indiv_mels, mel, y, landmarks, blurs, data_weight
 
 
 class SyncnetDataset(Dataset):
@@ -429,12 +461,12 @@ class SyncnetDataset(Dataset):
             img_name, wrong_img_name = self.sample_right_wrong_images(
                 img_names)
 
-            window_fnames = self.get_window(img_name, vidname)
+            window_fnames, _ = self.get_window(img_name, vidname)
             if window_fnames is None:
                 idx += 1
                 continue
 
-            false_window_fnames = self.get_window(wrong_img_name, vidname)
+            false_window_fnames, _ = self.get_window(wrong_img_name, vidname)
             if false_window_fnames is None:
                 idx += 1
                 continue
