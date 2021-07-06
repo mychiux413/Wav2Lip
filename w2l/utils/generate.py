@@ -1,5 +1,6 @@
 from w2l.models.syncnet import SyncNet_color
 from w2l.models.wav2lip import Wav2Lip_disc_qual
+from w2l.models.blend import LaplacianBlending
 from w2l.utils.face_detect import FaceConfigStream
 from w2l.utils import audio
 from w2l.hparams import hparams
@@ -15,6 +16,7 @@ from torch.utils import data as data_utils
 from w2l.utils.loss import cal_blur
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+lb = LaplacianBlending().to(device).eval()
 
 
 def _load(checkpoint_path):
@@ -87,23 +89,27 @@ def datagen(config_path, mels, batch_size=128, start_frame=0):
     stream_loader = data_utils.DataLoader(
         stream,
         num_workers=0, batch_size=batch_size)
+
+    const_mouth_mask_batch = torch.ones((batch_size, hparams.img_size, hparams.img_size, 1), dtype=torch.float32)
     for img_batch, mel_batch, frame_batch, coords_batch, mouth_batch in stream_loader:
         img_masked = img_batch.clone()
+        B = img_masked.size(0)
+        mouth_mask_batch = const_mouth_mask_batch[:B]
         for j, (x1, x2, y1, y2) in enumerate(mouth_batch):
-            img_masked[j, y1:y2, x1:x2] = 0
-            # mouth_passer = torch.zeros([hparams.img_size, hparams.img_size, 1], dtype=torch.float32)
-            # mouth_passer[y1:y2, x1:x2] = 1
-            # img_batch[j] *= mouth_passer
+            mouth_mask_batch[j, y1:y2, x1:x2] = 0
+        img_masked *= mouth_mask_batch
 
         img_batch = torch.cat((img_masked, img_batch), axis=3) / 255.
         img_batch = img_batch.permute((0, 3, 1, 2))
         mel_batch = torch.reshape(
-            mel_batch, [mel_batch.size(0), 1, hparams.num_mels, hparams.syncnet_mel_step_size])
+            mel_batch, [B, 1, hparams.num_mels, hparams.syncnet_mel_step_size])
+        half_mouth_mask_batch = mouth_mask_batch[:, hparams.half_img_size:].permute((0, 3, 1, 2))
 
         # img_batch: (B, 6, H, W)
+        # mouth_mask_batch: (B, 1, H, W)
         # mel_batch: (B, 1, 80, 16)
         # coords_batch: (B, 4)
-        yield img_batch, mel_batch, frame_batch, coords_batch
+        yield img_batch, half_mouth_mask_batch, mel_batch, frame_batch, coords_batch
 
 
 def create_ellipse_filter():
@@ -136,7 +142,7 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
                    batch_size=128, num_mels=80, mel_step_size=16, sample_rate=16000,
                    output_fps=None, output_crf=0, start_seconds=0.0):
 
-    face_filter, anti_face_filter = create_ellipse_filter()
+    # face_filter, anti_face_filter = create_ellipse_filter()
     assert os.path.exists(face_config_path)
     with open(face_config_path, 'r') as f:
         firstline = next(f)
@@ -157,7 +163,7 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
     print("Model loaded")
 
     model.eval()
-    for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, total=len(mel_chunks) // batch_size)):
+    for i, (img_batch, half_mouth_mask_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, total=len(mel_chunks) // batch_size)):
         if i == 0:
             frame_h, frame_w = frames[0].shape[:-1]
             out = cv2.VideoWriter(
@@ -166,12 +172,16 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
 
         img_batch = img_batch.to(device)
         mel_batch = mel_batch.to(device)
+        half_mouth_mask_batch = half_mouth_mask_batch.to(device)
 
         with torch.no_grad():
             # dump_face(img_batch, '/hdd/checkpoints/w2l/temp')
             half_pred, _ = model(mel_batch, img_batch)
 
-        half_pred = half_pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
+            # wrong window is still the real image here
+            half_real_img_batch = img_batch[:, 3:, hparams.half_img_size:]
+            half_pred = lb(half_real_img_batch, half_pred, half_mouth_mask_batch)
+            half_pred = half_pred.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.
 
         for p, f, c in zip(half_pred, frames, coords):
             f = f.cpu().numpy().astype(np.uint8)
@@ -181,13 +191,12 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
             half_face_height = face_height // 2
             if face_width > 0 and face_height > 0:
                 p = cv2.resize(p, (face_width, half_face_height))
-                f_of_p = f[(y2-half_face_height):y2, x1:x2].astype(np.float32)
-                face_filter = np.expand_dims(cv2.resize(
-                    face_filter.copy(), (face_width, half_face_height)), -1)
-                anti_face_filter = np.expand_dims(cv2.resize(
-                    anti_face_filter.copy(), (face_width, half_face_height)), -1)
-                f[(y2-half_face_height):y2, x1:x2] = (face_filter *
-                                                      p + anti_face_filter * f_of_p).astype(np.uint8)
+                # f_of_p = f[(y2-half_face_height):y2, x1:x2].astype(np.float32)
+                # face_filter = np.expand_dims(cv2.resize(
+                #     face_filter.copy(), (face_width, half_face_height)), -1)
+                # anti_face_filter = np.expand_dims(cv2.resize(
+                #     anti_face_filter.copy(), (face_width, half_face_height)), -1)
+                f[(y2-half_face_height):y2, x1:x2] = p.astype(np.uint8)
             out.write(f)
 
     out.release()
@@ -239,7 +248,7 @@ def demo(face_config_path, audio_path, model_path, output_path, disc_path, syncn
             y = torch.zeros((B, 1), dtype=torch.float32, device=device)
         return cosine_loss(a, v, y).reshape((B,))
 
-    face_filter, anti_face_filter = create_ellipse_filter()
+    # face_filter, anti_face_filter = create_ellipse_filter()
     assert os.path.exists(face_config_path)
     with open(face_config_path, 'r') as f:
         firstline = next(f)
@@ -268,7 +277,7 @@ def demo(face_config_path, audio_path, model_path, output_path, disc_path, syncn
     gen_imgs_for_sync = []
     last_mel = None
     last_gen_syncloss = 0.0
-    for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, total=len(mel_chunks) // batch_size)):
+    for i, (img_batch, half_mouth_mask_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, total=len(mel_chunks) // batch_size)):
         if i == 0:
             frame_h, frame_w = frames[0].shape[:-1]
             out = cv2.VideoWriter(
@@ -277,6 +286,7 @@ def demo(face_config_path, audio_path, model_path, output_path, disc_path, syncn
 
         img_batch = img_batch.to(device)
         mel_batch = mel_batch.to(device)
+        half_mouth_mask_batch = half_mouth_mask_batch.to(device)
         half_x = img_batch[:, :, hparams.half_img_size:]
         half_x_truth_batch = half_x[:, :3]
         if last_mel is None:
@@ -285,10 +295,6 @@ def demo(face_config_path, audio_path, model_path, output_path, disc_path, syncn
         with torch.no_grad():
             # dump_face(img_batch, '/hdd/checkpoints/w2l/temp')
             half_pred, _ = model(mel_batch, img_batch)
-
-        # half_pred = torch.unsqueeze(half_pred, 1)
-        # print(half_pred.shape, half_img_batch.shape)
-        # perceps = disc.perceptual_forward(torch.unsqueeze(half_pred, 1), torch.unsqueeze(half_img_batch, 1))
 
         gen_sync_losses = []
         for i in range(len(half_x)):
@@ -305,7 +311,10 @@ def demo(face_config_path, audio_path, model_path, output_path, disc_path, syncn
 
             gen_sync_losses.append(last_gen_syncloss)
 
-        half_pred = half_pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
+        # wrong window is still the real image here
+        half_real_img_batch = img_batch[:, 3:, hparams.half_img_size:]
+        half_pred = lb(half_real_img_batch, half_pred, half_mouth_mask_batch)
+        half_pred = half_pred.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.
 
         for p, f, c, gs in zip(
                 half_pred, frames, coords, gen_sync_losses):
@@ -322,12 +331,11 @@ def demo(face_config_path, audio_path, model_path, output_path, disc_path, syncn
             if face_width > 0 and face_height > 0:
                 p = cv2.resize(p, (face_width, half_face_height))
                 f_of_p = f[(y2-half_face_height):y2, x1:x2].astype(np.float32)
-                face_filter = np.expand_dims(cv2.resize(
-                    face_filter.copy(), (face_width, half_face_height)), -1)
-                anti_face_filter = np.expand_dims(cv2.resize(
-                    anti_face_filter.copy(), (face_width, half_face_height)), -1)
-                f[(y2-half_face_height):y2, x1:x2] = (face_filter *
-                                                      p + anti_face_filter * f_of_p).astype(np.uint8)
+                # face_filter = np.expand_dims(cv2.resize(
+                #     face_filter.copy(), (face_width, half_face_height)), -1)
+                # anti_face_filter = np.expand_dims(cv2.resize(
+                #     anti_face_filter.copy(), (face_width, half_face_height)), -1)
+                f[(y2-half_face_height):y2, x1:x2] = p
 
                 rb = cal_blur(f_of_p.astype(np.uint8))
                 gb = cal_blur(p.astype(np.uint8))

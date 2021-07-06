@@ -127,22 +127,26 @@ def cal_mouth_mask_pos(landmarks, img_height, img_width):
 
     return mouth_x1, mouth_x2, mouth_y1, mouth_y2
 
-# def cal_mouth_contour_mask(landmarks, img_height, img_width):
-#     # mouth_landmarks = landmarks[48:]
-#     delta_face_width = (landmarks[14, 0] - landmarks[2, 0]) * 0.05
-#     delta_face_height = (landmarks[33, 1] - landmarks[8, 1]) * 0.1
-#     mouth_contours = [
-#         [landmarks[2, 0] + delta_face_width, landmarks[2, 1]],
-#         [landmarks[5, 0] + delta_face_width, landmarks[2, 1]],
-#         [landmarks[8, 0], landmarks[2, 1] - delta_face_height],
-#         [landmarks[11, 0] - delta_face_width, landmarks[2, 1]],
-#         [landmarks[14, 0] - delta_face_width, landmarks[2, 1]],
-#         [landmarks[33, 0], landmarks[2, 1] + delta_face_height],
-#     ]
-#     mouth_contours = np.array(mouth_contours, dtype=np.float)
-#     mouth_contours[:, 1] = np.maximum(mouth_contours[:, 1], 0.5)
 
-#     return mouth_contours
+def cal_mouth_contour_mask(white_mask, landmarks, img_height, img_width):
+    # mouth_landmarks = landmarks[48:]
+    delta_face_width = (landmarks[14, 0] - landmarks[2, 0]) * 0.05
+    delta_face_height = (landmarks[33, 1] - landmarks[8, 1]) * 0.1
+    mouth_contours = [[
+        [landmarks[2, 0] + delta_face_width, landmarks[2, 1]],
+        [landmarks[5, 0] + delta_face_width, landmarks[2, 1]],
+        [landmarks[8, 0], landmarks[2, 1] - delta_face_height],
+        [landmarks[11, 0] - delta_face_width, landmarks[2, 1]],
+        [landmarks[14, 0] - delta_face_width, landmarks[2, 1]],
+        [landmarks[33, 0], landmarks[2, 1] + delta_face_height],
+    ]]
+    mouth_contours = np.array(mouth_contours, dtype=np.float)
+    mouth_contours[0, :, 0] = mouth_contours[:, 0] * img_width
+    mouth_contours[0, :, 1] = np.maximum(mouth_contours[:, 1], 0.5) * img_height
+    mouth_contours = mouth_contours.astype(np.int32)
+    white_mask = cv2.drawContours(white_mask, mouth_contours, -1, (0, 0, 0), -1)
+    return white_mask
+
 
 class Dataset(object):
     valid_sampling_width = hparams.fps + 1
