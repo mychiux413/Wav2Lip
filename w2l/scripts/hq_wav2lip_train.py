@@ -203,7 +203,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
         running_blurs_loss = 0.
 
         prog_bar = tqdm(enumerate(train_data_loader))
-        for step, (x, indiv_mels, mel, gt, landmarks_gt, blurs_gt, weights) in prog_bar:
+        for step, (x, indiv_mels, mel, gt, landmarks_gt, blurs_gt, weights, masks) in prog_bar:
             B = x.size(0)
             if B == 1:
                 continue
@@ -220,7 +220,9 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             landmarks_gt = landmarks_gt.to(device)
             weights = weights.to(device)
             blurs_gt = blurs_gt.to(device)
-            # masks = masks.to(device)
+            masks = masks.to(device)
+            bypass_mouth = 1.0 - masks
+            half_bypass_mouth = bypass_mouth[:, :, :, half_img_size:]
             half_g, landmarks_g = model(indiv_mels, x)
             upper_gt = gt[:, :, :, :half_img_size]
             g = torch.cat([upper_gt, half_g], dim=3)
@@ -253,10 +255,10 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             # masked_g = masks_for_g * g
             # masked_gt = masks_for_g * gt
 
-            l1 = l1loss(half_g, half_gt).reshape(
+            l1 = l1loss(half_g * half_bypass_mouth, half_gt * half_bypass_mouth).reshape(
                 (B, hparams.syncnet_T * 3 * hparams.half_img_size * hparams.img_size)).mean(1)
 
-            ssim = ms_ssim_loss(gt, g, B, hparams.syncnet_T)
+            ssim = ms_ssim_loss(gt * bypass_mouth, g * bypass_mouth, B, hparams.syncnet_T)
             rec_loss = hparams.l1_wt * \
                 l1 + hparams.ssim_wt * ssim
 
@@ -423,7 +425,7 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         running_landmarks_loss, running_blurs_loss = [
         ], [], [], [], [], [], [], [], [], [], []
 
-    for step, (x, indiv_mels, mel, gt, landmarks_gt, blurs_gt, weights) in enumerate((test_data_loader)):
+    for step, (x, indiv_mels, mel, gt, landmarks_gt, blurs_gt, weights, masks) in enumerate((test_data_loader)):
         B = x.size(0)
         if B == 1:
             continue
@@ -439,6 +441,9 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         landmarks_gt = landmarks_gt.to(device)
         weights = weights.to(device)
         blurs_gt = blurs_gt.to(device)
+        masks = masks.to(device)
+        bypass_mouth_masks = 1.0 - masks
+        half_bypass_mouth_masks = bypass_mouth_masks[:, :, :, hparams.half_img_size:]
 
         half_g, landmarks_g = model(indiv_mels, x)
         upper_gt = gt[:, :, :, :hparams.half_img_size]
@@ -470,10 +475,10 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         perceptual_loss = disc.perceptual_forward(half_g, half_x)
         perceptual_loss = perceptual_loss.reshape((B, hparams.syncnet_T)).mean(1)
 
-        l1 = l1loss(half_g, half_gt).reshape(
+        l1 = l1loss(half_g * half_bypass_mouth_masks, half_gt * half_bypass_mouth_masks).reshape(
                 (B, hparams.syncnet_T * 3 * hparams.half_img_size * hparams.img_size)).mean(1)
 
-        ssim = ms_ssim_loss(gt, g, B, hparams.syncnet_T)
+        ssim = ms_ssim_loss(gt * bypass_mouth_masks, g * bypass_mouth_masks, B, hparams.syncnet_T)
         rec_loss = hparams.l1_wt * \
             l1 + hparams.ssim_wt * ssim
 

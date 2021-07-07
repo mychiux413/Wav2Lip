@@ -1,4 +1,6 @@
 from os.path import dirname, join, basename, isfile
+
+from numpy.lib.shape_base import expand_dims
 from w2l.models import syncnet
 from tqdm import tqdm
 from w2l.utils import audio
@@ -130,6 +132,7 @@ def cal_mouth_mask_pos(landmarks, img_height, img_width):
 
 def cal_mouth_contour_mask(white_mask, landmarks, img_height, img_width,
                            shrink_width_ratio=0.05, expand_height_ratio=0.1):
+    """In cv2 format (H, W, C)"""
     # mouth_landmarks = landmarks[48:]
     delta_face_width = (landmarks[14, 0] -
                         landmarks[2, 0]) * shrink_width_ratio
@@ -349,18 +352,24 @@ class Dataset(object):
         landmarks = [self.landmarks[vidname][fname]
                      for fname in window_base_fnames]
         # masks = []
+        white_mask = np.ones((self.img_size, self.img_size, 1), dtype=np.uint8)
+        masks = []
         for i, landmark in enumerate(landmarks):
-            mouth_x1, mouth_x2, mouth_y1, mouth_y2 = cal_mouth_mask_pos(
-                landmark,
-                self.img_size,
-                self.img_size)
+            mask = cal_mouth_contour_mask(
+                white_mask.copy(), landmark,
+                self.img_size, self.img_size,
+                shrink_width_ratio=0.025,
+                expand_height_ratio=0.125,
+            )
+            mask = np.transpose(mask, (0, 3, 1, 2)).astype(np.float)
+            masks.append(mask)
 
             if window is not None:
-                window[i, :, mouth_y1:mouth_y2, mouth_x1:mouth_x2] = 0.
+                window[i] *= mask
 
         target_landmarks = [landmark[hparams.landmarks_points]
                             for landmark in landmarks]
-        return window, target_landmarks
+        return window, target_landmarks, np.asfarray(masks)
 
     def __len__(self):
         return self.data_len
@@ -440,7 +449,7 @@ class Wav2LipDataset(Dataset):
             wrong_window = cat[self.syncnet_T:(self.syncnet_T * 2):, :, :]
             y = cat[(self.syncnet_T * 2):, :, :, :]
 
-            window, landmarks = self.mask_mouth(
+            window, landmarks, masks = self.mask_mouth(
                 window, vidname, window_base_fnames)
 
             x = torch.cat([window, wrong_window], axis=1)
@@ -458,7 +467,8 @@ class Wav2LipDataset(Dataset):
             # y: (T, 3, H, W)
             # indiv_mels: (T, 1, 80, 16)
             # mel: (1, 80, 16)
-            return x, indiv_mels, mel, y, landmarks, blurs, data_weight
+            # masks: (T, 1, H, W)
+            return x, indiv_mels, mel, y, landmarks, blurs, data_weight, masks
 
 
 class SyncnetDataset(Dataset):
