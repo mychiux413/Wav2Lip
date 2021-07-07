@@ -128,23 +128,28 @@ def cal_mouth_mask_pos(landmarks, img_height, img_width):
     return mouth_x1, mouth_x2, mouth_y1, mouth_y2
 
 
-def cal_mouth_contour_mask(white_mask, landmarks, img_height, img_width):
+def cal_mouth_contour_mask(white_mask, landmarks, img_height, img_width,
+                           shrink_width_ratio=0.05, expand_height_ratio=0.1):
     # mouth_landmarks = landmarks[48:]
-    delta_face_width = (landmarks[14, 0] - landmarks[2, 0]) * 0.05
-    delta_face_height = (landmarks[33, 1] - landmarks[8, 1]) * 0.1
+    delta_face_width = (landmarks[14, 0] -
+                        landmarks[2, 0]) * shrink_width_ratio
+    delta_face_height = (landmarks[33, 1] -
+                         landmarks[8, 1]) * expand_height_ratio
     mouth_contours = [[
         [landmarks[2, 0] + delta_face_width, landmarks[2, 1]],
-        [landmarks[5, 0] + delta_face_width, landmarks[2, 1]],
-        [landmarks[8, 0], landmarks[2, 1] - delta_face_height],
-        [landmarks[11, 0] - delta_face_width, landmarks[2, 1]],
-        [landmarks[14, 0] - delta_face_width, landmarks[2, 1]],
-        [landmarks[33, 0], landmarks[2, 1] + delta_face_height],
+        [landmarks[4, 0] + delta_face_width, landmarks[5, 1]],
+        [landmarks[8, 0], landmarks[8, 1] - delta_face_height],
+        [landmarks[12, 0] - delta_face_width, landmarks[11, 1]],
+        [landmarks[14, 0] - delta_face_width, landmarks[14, 1]],
+        [landmarks[33, 0], landmarks[33, 1] + delta_face_height],
     ]]
     mouth_contours = np.array(mouth_contours, dtype=np.float)
-    mouth_contours[0, :, 0] = mouth_contours[:, 0] * img_width
-    mouth_contours[0, :, 1] = np.maximum(mouth_contours[:, 1], 0.5) * img_height
+    mouth_contours[0, :, 0] = mouth_contours[0, :, 0] * img_width
+    mouth_contours[0, :, 1] = np.maximum(
+        mouth_contours[0, :, 1], 0.5) * img_height
     mouth_contours = mouth_contours.astype(np.int32)
-    white_mask = cv2.drawContours(white_mask, mouth_contours, -1, (0, 0, 0), -1)
+    white_mask = cv2.drawContours(
+        white_mask, mouth_contours, -1, (0, 0, 0), -1)
     return white_mask
 
 
@@ -169,13 +174,15 @@ class Dataset(object):
         self.synclosses = {}
         synclosses_path = os.path.join(data_root, "synclosses.npy")
         if os.path.exists(synclosses_path) and use_syncnet_weights:
-            self.synclosses = np.load(synclosses_path, allow_pickle=True).tolist()
+            self.synclosses = np.load(
+                synclosses_path, allow_pickle=True).tolist()
             videos_set = set(self.all_videos)
             drops = []
 
             keys = list(self.synclosses.keys())
             for key in keys:
-                self.synclosses[os.path.join(data_root, key)] = self.synclosses.pop(key)
+                self.synclosses[os.path.join(
+                    data_root, key)] = self.synclosses.pop(key)
 
             for vidname in self.synclosses.keys():
                 if vidname not in videos_set:
@@ -194,7 +201,8 @@ class Dataset(object):
             max_mean_syncloss = max(means)
             width = max_mean_syncloss - min_mean_syncloss
             for vidname in self.synclosses.keys():
-                self.synclosses[vidname] = max(0.0, (self.synclosses[vidname] - max_mean_syncloss) * -1.0 / width)
+                self.synclosses[vidname] = max(
+                    0.0, (self.synclosses[vidname] - max_mean_syncloss) * -1.0 / width)
 
         self.img_names = {}
         self.orig_mels = Mels()
@@ -338,7 +346,8 @@ class Dataset(object):
         return [self.blurs[vidname][fname] for fname in window_base_fnames]
 
     def mask_mouth(self, window, vidname, window_base_fnames):
-        landmarks = [self.landmarks[vidname][fname] for fname in window_base_fnames]
+        landmarks = [self.landmarks[vidname][fname]
+                     for fname in window_base_fnames]
         # masks = []
         for i, landmark in enumerate(landmarks):
             mouth_x1, mouth_x2, mouth_y1, mouth_y2 = cal_mouth_mask_pos(
@@ -389,7 +398,8 @@ class Wav2LipDataset(Dataset):
             img_name, wrong_img_name = self.sample_right_wrong_images(
                 img_names)
 
-            window_fnames, window_base_fnames = self.get_window(img_name, vidname)
+            window_fnames, window_base_fnames = self.get_window(
+                img_name, vidname)
             wrong_window_fnames, _ = self.get_window(wrong_img_name, vidname)
             if window_fnames is None or wrong_window_fnames is None:
                 idx += 1

@@ -8,7 +8,8 @@ import numpy as np
 from w2l.hparams import hparams
 import torch
 from w2l.utils.facenet import load_facenet_model
-from w2l.utils.data import cal_mouth_mask_pos
+from w2l.utils.data import cal_mouth_mask_pos, cal_mouth_contour_mask
+import json
 
 
 class Smoothier:
@@ -45,6 +46,38 @@ def square_positions(x1, x2, y1, y2):
         x1 = x1 - half_dw
         x2 = x2 + (dw - half_dw)
     return x1, x2, y1, y2
+
+
+def save_face_config(path, config, fps):
+    if 'landmarks' in config:
+        config['landmarks'] = config['landmarks'].apply(
+            lambda x: json.dumps(x.tolist(), ensure_ascii=False).replace(' ', ''))
+    config.to_csv(path, sep='\t', index=None, encoding='utf8')
+
+    # **** add info info config ****
+    raw = open(path).read()
+    with open(path, 'w') as f:
+        f.write('# fps={}\n'.format(fps))
+        f.write(raw)
+
+    print("save face config at:", path)
+
+
+def read_face_config(path):
+    fps = 0.0
+    try:
+        with open(path, 'r') as f:
+            first_line = f.readline()
+            fps = float(first_line.split('=')[1].strip())
+    except Exception as err:
+        print(err)
+
+    print("read face config from:", path)
+    config = pd.read_csv(path, sep='\t', comment='#')
+    if 'landmarks' in config:
+        config['landmarks'] = config['landmarks'].apply(lambda x: np.array(json.loads(x), np.float))
+
+    return config, fps
 
 
 def detect_face_and_dump_from_image(img_path, dump_dir, device, face_size, fps=25, pads=None, box=None):
@@ -84,14 +117,7 @@ def detect_face_and_dump_from_image(img_path, dump_dir, device, face_size, fps=2
     }]
     face_config_path = os.path.join(dump_dir, "face.tsv")
     df = pd.DataFrame(rows)
-    df.to_csv(face_config_path, sep='\t', index=None)
-
-    # **** add info info config ****
-    raw = open(face_config_path).read()
-    with open(face_config_path, 'w') as f:
-        f.write('# fps={}\n'.format(fps))
-        f.write(raw)
-    # ******************************
+    save_face_config(face_config_path, df, fps)
 
     return face_config_path
 
@@ -149,8 +175,8 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
     _, frame_count = get_video_fps_and_frame_count(vidpath)
     smoothier = None
     mouth_smoothier = None
-    x1_edge = hparams.img_size * hparams.x1_mouth_mask_edge
-    x2_edge = hparams.img_size * hparams.x2_mouth_mask_edge
+    # x1_edge = hparams.img_size * hparams.x1_mouth_mask_edge
+    # x2_edge = hparams.img_size * hparams.x2_mouth_mask_edge
     face_size = int(face_size)
     for frames in tqdm(stream_video_as_batch(
             vidpath, face_detect_batch_size, face_detect_batch_size),
@@ -287,6 +313,7 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
                     'mouth_x2': mouth_x2,
                     'mouth_y1': mouth_y1,
                     'mouth_y2': mouth_y2,
+                    'landmarks': landmarks,
                 })
         else:
             for frame in frames:
@@ -308,27 +335,21 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
                     'x2': x2,
                     'y1': y1,
                     'y2': y2,
+                    'landmarks': [],
                 })
 
     face_config_path = os.path.join(dump_dir, "face.tsv")
     df = pd.DataFrame(rows)
-    df.to_csv(face_config_path, sep='\t', index=None)
-
-    # **** add info info config ****
     video_stream = cv2.VideoCapture(vidpath)
     fps = video_stream.get(cv2.CAP_PROP_FPS)
     video_stream.release()
-    raw = open(face_config_path).read()
-    with open(face_config_path, 'w') as f:
-        f.write('# fps={}\n'.format(fps))
-        f.write(raw)
-    # ******************************
+    save_face_config(face_config_path, df, fps)
 
     return face_config_path
 
 
 def stream_from_face_config(config_path, infinite_loop=False, start_frame=0):
-    config = pd.read_csv(config_path, sep='\t', comment='#')
+    config, _ = read_face_config(config_path)
     if infinite_loop and len(config) == 1:
         row = config.iloc[0, :]
         img = cv2.imread(row['img_path'])
@@ -367,7 +388,7 @@ class FaceConfigStream(object):
     def __init__(self, config_path, mels, start_frame=0):
         self.config_path = config_path
         self.start_frame = start_frame
-        self.config = pd.read_csv(config_path, sep='\t', comment='#')
+        self.config, _ = read_face_config(config_path)
         self.mels = mels.copy()
         self.video_len = len(self.config) - self.start_frame
 
@@ -385,12 +406,19 @@ class FaceConfigStream(object):
             face = np.zeros(
                 (hparams.img_size, hparams.img_size, 3), dtype='uint8')
         x1, x2, y1, y2 = (row['x1'], row['x2'], row['y1'], row['y2'])
-        mouth_x1, mouth_x2, mouth_y1, mouth_y2 = (
-            row['mouth_x1'], row['mouth_x2'], row['mouth_y1'], row['mouth_y2'])
+        # mouth_x1, mouth_x2, mouth_y1, mouth_y2 = (
+        #     row['mouth_x1'], row['mouth_x2'], row['mouth_y1'], row['mouth_y2'])
 
-        face = torch.FloatTensor(face)
         mel = torch.FloatTensor(mel)
         img = torch.IntTensor(img)
         coords = torch.IntTensor([y1, y2, x1, x2])
-        mouths = torch.IntTensor([mouth_x1, mouth_x2, mouth_y1, mouth_y2])
-        return face, mel, img, coords, mouths
+        # mouths = torch.IntTensor([mouth_x1, mouth_x2, mouth_y1, mouth_y2])
+        landmarks = row['landmarks']
+        white_mask = np.ones((hparams.img_size, hparams.img_size, 1), dtype='uint8')
+        mask = cal_mouth_contour_mask(white_mask.copy(), landmarks, hparams.img_size, hparams.img_size)
+        masked_face = face.copy() * mask
+        x = np.concatenate((masked_face, face), axis=2)
+        x = torch.FloatTensor(x)
+        mask = torch.FloatTensor(mask)
+
+        return x, mel, img, coords, mask

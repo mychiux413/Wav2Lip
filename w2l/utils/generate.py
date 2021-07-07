@@ -90,26 +90,26 @@ def datagen(config_path, mels, batch_size=128, start_frame=0):
         stream,
         num_workers=0, batch_size=batch_size)
 
-    const_mouth_mask_batch = torch.ones((batch_size, hparams.img_size, hparams.img_size, 1), dtype=torch.float32)
-    for img_batch, mel_batch, frame_batch, coords_batch, mouth_batch in stream_loader:
-        img_masked = img_batch.clone()
-        B = img_masked.size(0)
-        mouth_mask_batch = const_mouth_mask_batch[:B]
-        for j, (x1, x2, y1, y2) in enumerate(mouth_batch):
-            mouth_mask_batch[j, y1:y2, x1:x2] = 0
-        img_masked *= mouth_mask_batch
+    # const_mouth_mask_batch = torch.ones((batch_size, hparams.img_size, hparams.img_size, 1), dtype=torch.float32)
+    for x, mel_batch, frame_batch, coords_batch, masks in stream_loader:
+        # img_masked = img_batch.clone()
+        B = x.size(0)
+        # mouth_mask_batch = const_mouth_mask_batch[:B]
+        # for j, (x1, x2, y1, y2) in enumerate(mouth_batch):
+        #     mouth_mask_batch[j, y1:y2, x1:x2] = 0
+        # img_masked *= mouth_mask_batch
 
-        img_batch = torch.cat((img_masked, img_batch), axis=3) / 255.
-        img_batch = img_batch.permute((0, 3, 1, 2))
+        # img_batch = torch.cat((img_masked, img_batch), axis=3) / 255.
+        x = (x / 255.).permute((0, 3, 1, 2))
         mel_batch = torch.reshape(
             mel_batch, [B, 1, hparams.num_mels, hparams.syncnet_mel_step_size])
-        half_mouth_mask_batch = mouth_mask_batch[:, hparams.half_img_size:].permute((0, 3, 1, 2))
+        half_masks = masks[:, hparams.half_img_size:].permute((0, 3, 1, 2))
 
         # img_batch: (B, 6, H, W)
         # mouth_mask_batch: (B, 1, H, W)
         # mel_batch: (B, 1, 80, 16)
         # coords_batch: (B, 4)
-        yield img_batch, half_mouth_mask_batch, mel_batch, frame_batch, coords_batch
+        yield x, half_masks, mel_batch, frame_batch, coords_batch
 
 
 def create_ellipse_filter():
@@ -163,7 +163,7 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
     print("Model loaded")
 
     model.eval()
-    for i, (img_batch, half_mouth_mask_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, total=len(mel_chunks) // batch_size)):
+    for i, (img_batch, half_masks, mel_batch, frames, coords) in enumerate(tqdm(gen, total=len(mel_chunks) // batch_size)):
         if i == 0:
             frame_h, frame_w = frames[0].shape[:-1]
             out = cv2.VideoWriter(
@@ -172,7 +172,7 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
 
         img_batch = img_batch.to(device)
         mel_batch = mel_batch.to(device)
-        half_mouth_mask_batch = half_mouth_mask_batch.to(device)
+        half_masks = half_masks.to(device)
 
         with torch.no_grad():
             # dump_face(img_batch, '/hdd/checkpoints/w2l/temp')
@@ -180,7 +180,7 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
 
             # wrong window is still the real image here
             half_real_img_batch = img_batch[:, 3:, hparams.half_img_size:]
-            half_pred = lb(half_real_img_batch, half_pred, half_mouth_mask_batch)
+            half_pred = lb(half_real_img_batch, half_pred, half_masks)
             half_pred = half_pred.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.
 
         for p, f, c in zip(half_pred, frames, coords):
