@@ -1,7 +1,7 @@
 from w2l.models.syncnet import SyncNet_color
 from w2l.models.wav2lip import Wav2Lip_disc_qual
 from w2l.models.blend import LaplacianBlending
-from w2l.utils.face_detect import FaceConfigStream
+from w2l.utils.face_detect import FaceConfigStream, FaceConfigReferenceStream
 from w2l.utils import audio
 from w2l.hparams import hparams
 import numpy as np
@@ -90,16 +90,8 @@ def datagen(config_path, mels, batch_size=128, start_frame=0):
         stream,
         num_workers=0, batch_size=batch_size)
 
-    # const_mouth_mask_batch = torch.ones((batch_size, hparams.img_size, hparams.img_size, 1), dtype=torch.float32)
     for x, mel_batch, frame_batch, coords_batch, masks in stream_loader:
-        # img_masked = img_batch.clone()
         B = x.size(0)
-        # mouth_mask_batch = const_mouth_mask_batch[:B]
-        # for j, (x1, x2, y1, y2) in enumerate(mouth_batch):
-        #     mouth_mask_batch[j, y1:y2, x1:x2] = 0
-        # img_masked *= mouth_mask_batch
-
-        # img_batch = torch.cat((img_masked, img_batch), axis=3) / 255.
         x = (x / 255.).permute((0, 3, 1, 2))
         mel_batch = torch.reshape(
             mel_batch, [B, 1, hparams.num_mels, hparams.syncnet_mel_step_size])
@@ -163,7 +155,26 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
     print("Model loaded")
 
     model.eval()
-    for i, (img_batch, half_masks, mel_batch, frames, coords) in enumerate(tqdm(gen, total=len(mel_chunks) // batch_size)):
+
+    stream = FaceConfigReferenceStream(face_config_path)
+    stream_loader = data_utils.DataLoader(
+        stream,
+        num_workers=0, batch_size=batch_size)
+
+    reference_embedding = None
+    n_frames = stream.video_len
+
+    with torch.no_grad():
+        for ref in stream_loader:
+            B = ref.size(0)
+            emb = model.forward_reference(ref) * float(B / n_frames)
+            if reference_embedding is None:
+                reference_embedding = emb
+            else:
+                reference_embedding += emb
+
+    for i, (img_batch, half_masks, mel_batch, frames, coords) in enumerate(
+            tqdm(gen, total=len(mel_chunks) // batch_size)):
         if i == 0:
             frame_h, frame_w = frames[0].shape[:-1]
             out = cv2.VideoWriter(
@@ -176,7 +187,8 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
 
         with torch.no_grad():
             # dump_face(img_batch, '/hdd/checkpoints/w2l/temp')
-            half_pred, _ = model(mel_batch, img_batch)
+            half_pred = model.inference(
+                mel_batch, img_batch, reference_embedding)
 
             # wrong window is still the real image here
             half_real_img_batch = img_batch[:, 3:, hparams.half_img_size:]
@@ -191,11 +203,6 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
             half_face_height = face_height // 2
             if face_width > 0 and face_height > 0:
                 p = cv2.resize(p, (face_width, half_face_height))
-                # f_of_p = f[(y2-half_face_height):y2, x1:x2].astype(np.float32)
-                # face_filter = np.expand_dims(cv2.resize(
-                #     face_filter.copy(), (face_width, half_face_height)), -1)
-                # anti_face_filter = np.expand_dims(cv2.resize(
-                #     anti_face_filter.copy(), (face_width, half_face_height)), -1)
                 f[(y2-half_face_height):y2, x1:x2] = p.astype(np.uint8)
             out.write(f)
 
@@ -302,8 +309,10 @@ def demo(face_config_path, audio_path, model_path, output_path, disc_path, syncn
             gen_imgs_for_sync.append(half_pred[i])
 
             if len(real_imgs_for_sync) == hparams.syncnet_T:
-                gen_for_sync = torch.unsqueeze(torch.cat(gen_imgs_for_sync, dim=0), 0)
-                last_gen_syncloss = get_sync_loss(syncnet, last_mel, gen_for_sync).mean()
+                gen_for_sync = torch.unsqueeze(
+                    torch.cat(gen_imgs_for_sync, dim=0), 0)
+                last_gen_syncloss = get_sync_loss(
+                    syncnet, last_mel, gen_for_sync).mean()
 
                 real_imgs_for_sync = []
                 gen_imgs_for_sync = []
@@ -331,10 +340,6 @@ def demo(face_config_path, audio_path, model_path, output_path, disc_path, syncn
             if face_width > 0 and face_height > 0:
                 p = cv2.resize(p, (face_width, half_face_height))
                 f_of_p = f[(y2-half_face_height):y2, x1:x2].astype(np.float32)
-                # face_filter = np.expand_dims(cv2.resize(
-                #     face_filter.copy(), (face_width, half_face_height)), -1)
-                # anti_face_filter = np.expand_dims(cv2.resize(
-                #     anti_face_filter.copy(), (face_width, half_face_height)), -1)
                 f[(y2-half_face_height):y2, x1:x2] = p
 
                 rb = cal_blur(f_of_p.astype(np.uint8))

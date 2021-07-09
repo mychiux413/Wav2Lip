@@ -1,11 +1,4 @@
 from functools import partial
-import sys
-
-from numpy.core.defchararray import endswith
-
-if sys.version_info[0] < 3 and sys.version_info[1] < 2:
-    raise Exception("Must be using >= Python 3.2")
-
 import numpy as np
 import argparse
 import os
@@ -328,20 +321,18 @@ def main():
         include_list = glob(os.path.join(include_dirs, '*/*.mp4'))
         filelist = set(filelist + include_list)
 
-    for f in tqdm(filelist, total=len(filelist), desc='dump video'):
-        if f.startswith(exclude_dirs):
-            continue
-        try:
-            process_video_file(fa, f, args)
-        except KeyboardInterrupt:
-            exit(0)
-        except Exception as _:  # noqa: F841
-            traceback.print_exc()
-            continue
+    # for f in tqdm(filelist, total=len(filelist), desc='dump video'):
+    #     if f.startswith(exclude_dirs):
+    #         continue
+    #     try:
+    #         process_video_file(fa, f, args)
+    #     except KeyboardInterrupt:
+    #         exit(0)
+    #     except Exception as _:  # noqa: F841
+    #         traceback.print_exc()
+    #         continue
 
     for vfile in tqdm(filelist, desc="dump audio"):
-        if vfile.startswith(exclude_dirs):
-            continue
         try:
             process_audio_file(vfile, args, template)
         except KeyboardInterrupt:
@@ -352,8 +343,6 @@ def main():
 
     facenet_model = load_facenet_model()
     for vfile in tqdm(filelist, desc="dump landmarks"):
-        if vfile.startswith(exclude_dirs):
-            continue
         try:
             with torch.no_grad():
                 process_mouth_position(facenet_model, args, vfile)
@@ -366,8 +355,6 @@ def main():
 
     def gen():
         for vfile in tqdm(filelist, desc="dump blur scores"):
-            if vfile.startswith(exclude_dirs):
-                continue
             yield args, vfile
 
     with Pool(hp.num_workers) as p:

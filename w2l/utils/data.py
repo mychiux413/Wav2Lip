@@ -1,7 +1,5 @@
-from os.path import dirname, join, basename, isfile
+from os.path import join, basename, isfile
 
-from numpy.lib.shape_base import expand_dims
-from w2l.models import syncnet
 from tqdm import tqdm
 from w2l.utils import audio
 
@@ -16,7 +14,6 @@ import cv2
 from w2l.hparams import hparams
 import torchvision
 from multiprocessing import Pool
-from collections import defaultdict
 
 augment_for_wav2lip = torchvision.transforms.Compose([
     torchvision.transforms.ColorJitter(brightness=(
@@ -169,7 +166,7 @@ class Dataset(object):
                  filelists_dir='filelists',
                  use_syncnet_weights=True):
         self.all_videos = list(filter(
-            lambda vidname: os.path.exists(join(vidname, "audio.ogg")),
+            lambda vidname: os.path.exists(join(vidname, "blur.npy")),
             get_image_list(data_root, split, limit=limit, filelists_dir=filelists_dir)))
         assert len(self.all_videos) > 0, "no video dirs found from: {} with filelists_dir: {}".format(
             data_root, filelists_dir,
@@ -233,7 +230,7 @@ class Dataset(object):
             for vidname in self.all_videos:
                 self.blurs[vidname] = join(vidname, "blur.npy")
         for vidname in self.blurs.keys():
-            assert vidname in self.orig_mels, "vidname {} is in blurs but not in orig_mels".format(
+            assert vidname in self.blurs, "vidname {} is in blurs but not in orig_mels".format(
                 vidname)
 
         self.img_size = hparams.img_size
@@ -277,6 +274,10 @@ class Dataset(object):
             window_fnames.append(frame)
             window_base_fnames.append(fname)
         return window_fnames, window_base_fnames
+
+    def random_sample_window(self, vidname):
+        imgs = self.img_names[vidname]
+        return np.random.choice(imgs, hparams.syncnet_T, replace=False)
 
     def read_window(self, window_fnames):
         # output: [(H, W, 3), ...]
@@ -361,7 +362,7 @@ class Dataset(object):
                 shrink_width_ratio=0.025,
                 expand_height_ratio=0.125,
             )
-            mask = np.transpose(mask, (0, 3, 1, 2)).astype(np.float)
+            mask = np.transpose(mask, (2, 0, 1)).astype(np.float)
             masks.append(mask)
 
             if window is not None:
@@ -404,12 +405,12 @@ class Wav2LipDataset(Dataset):
             vidname = self.get_vidname(idx)
             img_names = self.img_names[vidname]
 
-            img_name, wrong_img_name = self.sample_right_wrong_images(
+            img_name, _ = self.sample_right_wrong_images(
                 img_names)
 
             window_fnames, window_base_fnames = self.get_window(
                 img_name, vidname)
-            wrong_window_fnames, _ = self.get_window(wrong_img_name, vidname)
+            wrong_window_fnames = self.random_sample_window(vidname)
             if window_fnames is None or wrong_window_fnames is None:
                 idx += 1
                 continue
@@ -452,8 +453,6 @@ class Wav2LipDataset(Dataset):
             window, landmarks, masks = self.mask_mouth(
                 window, vidname, window_base_fnames)
 
-            x = torch.cat([window, wrong_window], axis=1)
-
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
             indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)
             landmarks = torch.FloatTensor(landmarks)
@@ -463,12 +462,13 @@ class Wav2LipDataset(Dataset):
 
             data_weight = self.get_data_weight(vidname)
 
-            # x: (T, 6, H, W)
+            # window: (T, 3, H, W)
+            # wrong_window: (T, 3, H, W)
             # y: (T, 3, H, W)
             # indiv_mels: (T, 1, 80, 16)
             # mel: (1, 80, 16)
             # masks: (T, 1, H, W)
-            return x, indiv_mels, mel, y, landmarks, blurs, data_weight, masks
+            return window, wrong_window, indiv_mels, mel, y, landmarks, blurs, data_weight, masks
 
 
 class SyncnetDataset(Dataset):
@@ -539,8 +539,6 @@ class SyncnetDataset(Dataset):
             orig_mel = self.orig_mels[vidname]
             mel = self.crop_audio_window(orig_mel, img_name)
 
-            # dump_as_video(window_fnames, vidname, self.get_frame_id(img_name), orig_mel)
-
             if (mel.shape[0] != self.syncnet_mel_step_size):
                 idx += 1
                 continue
@@ -553,19 +551,3 @@ class SyncnetDataset(Dataset):
             data_weight = self.get_data_weight(vidname)
 
             return x, mel, data_weight
-
-
-# def dump_as_video(window_fnames, vidname, start_frame_num, spec):
-#     from pydub import AudioSegment
-#     start_idx = int(80. * (start_frame_num / float(hparams.fps)))
-#     end_idx = start_idx + hparams.syncnet_mel_step_size
-#     spec_len = len(spec)
-#     print("window_fnames", window_fnames)
-#     print("vidname", vidname)
-#     audio_path = os.path.join(vidname, "audio.ogg")
-#     sound = AudioSegment.from_file(audio_path)
-#     sound_len = len(sound)
-#     chunk_start = int(sound_len * start_idx / spec_len)
-#     chunk_end = int(sound_len * end_idx / spec_len)
-#     chunk = sound[chunk_start:chunk_end]
-#     chunk.export('')
