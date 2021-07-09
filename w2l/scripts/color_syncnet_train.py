@@ -2,7 +2,6 @@ from os.path import join
 from tqdm import tqdm
 
 from w2l.models import SyncNet_color as SyncNet
-from w2l.models import SyncNet_shuffle_color
 
 import torch
 from torch import nn

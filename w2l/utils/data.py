@@ -368,9 +368,7 @@ class Dataset(object):
             if window is not None:
                 window[i] *= mask
 
-        target_landmarks = [landmark[hparams.landmarks_points]
-                            for landmark in landmarks]
-        return window, target_landmarks, np.asfarray(masks)
+        return window, np.asfarray(masks)
 
     def __len__(self):
         return self.data_len
@@ -450,12 +448,11 @@ class Wav2LipDataset(Dataset):
             wrong_window = cat[self.syncnet_T:(self.syncnet_T * 2):, :, :]
             y = cat[(self.syncnet_T * 2):, :, :, :]
 
-            window, landmarks, masks = self.mask_mouth(
+            window, masks = self.mask_mouth(
                 window, vidname, window_base_fnames)
 
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
             indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)
-            landmarks = torch.FloatTensor(landmarks)
 
             blurs = self.get_blurs(vidname, window_base_fnames)
             blurs = torch.FloatTensor(blurs)
@@ -468,7 +465,7 @@ class Wav2LipDataset(Dataset):
             # indiv_mels: (T, 1, 80, 16)
             # mel: (1, 80, 16)
             # masks: (T, 1, H, W)
-            return window, wrong_window, indiv_mels, mel, y, landmarks, blurs, data_weight, masks
+            return window, wrong_window, indiv_mels, mel, y, blurs, data_weight, masks
 
 
 class SyncnetDataset(Dataset):

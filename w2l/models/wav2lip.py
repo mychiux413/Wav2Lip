@@ -152,11 +152,6 @@ class Wav2Lip(nn.Module):
                                           nn.Conv2d(56, 3, kernel_size=1,
                                                     stride=1, padding=0),
                                           nn.Sigmoid())
-        self.landmarks_decoder = nn.Sequential(
-            nn.Linear(1024, 512),
-            nn.Dropout(0.2, inplace=True),
-            nn.Linear(512, len(hp.landmarks_points) * 2),
-        )
 
     def dump_face(self, face_sequences, dump_dir):
         from uuid import uuid4
@@ -202,6 +197,7 @@ class Wav2Lip(nn.Module):
                 cv2.imwrite(filename, img)
 
     def forward_reference(self, reference_sequences):
+        # reference_sequences: (B, T, 3, H, W)
         reference_sequences = reference_sequences.reshape(
             (-1, hp.syncnet_T * 3, hp.img_size, hp.img_size)
         )
@@ -269,13 +265,6 @@ class Wav2Lip(nn.Module):
 
         # (B x T, 512, 1, 1)
         x = audio_embedding + reference_embedding
-        # (B x T, 1024, 1, 1)
-        embedding = torch.cat([face_embedding, audio_embedding], dim=1).reshape(
-            (B * hp.syncnet_T, 1024))
-
-        # (B, T, 14, 2)
-        landmarks = self.landmarks_decoder(
-            embedding).reshape((B, hp.syncnet_T, 14, 2))
 
         for f in self.face_decoder_blocks:
             x = f(x)
@@ -291,7 +280,7 @@ class Wav2Lip(nn.Module):
         x = x.reshape((B, hp.syncnet_T, 3, hp.half_img_size, hp.img_size))
 
         # (B, T, 3, half_img_size, img_size), (B, T, 14, 2)
-        return x, landmarks
+        return x
 
 
 class Wav2Lip_disc_qual(nn.Module):

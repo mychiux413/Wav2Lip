@@ -321,16 +321,16 @@ def main():
         include_list = glob(os.path.join(include_dirs, '*/*.mp4'))
         filelist = set(filelist + include_list)
 
-    # for f in tqdm(filelist, total=len(filelist), desc='dump video'):
-    #     if f.startswith(exclude_dirs):
-    #         continue
-    #     try:
-    #         process_video_file(fa, f, args)
-    #     except KeyboardInterrupt:
-    #         exit(0)
-    #     except Exception as _:  # noqa: F841
-    #         traceback.print_exc()
-    #         continue
+    for f in tqdm(filelist, total=len(filelist), desc='dump video'):
+        if f.startswith(exclude_dirs):
+            continue
+        try:
+            process_video_file(fa, f, args)
+        except KeyboardInterrupt:
+            exit(0)
+        except Exception as _:  # noqa: F841
+            traceback.print_exc()
+            continue
 
     for vfile in tqdm(filelist, desc="dump audio"):
         try:

@@ -362,10 +362,11 @@ class FaceConfigStream(object):
         white_mask = np.ones((hparams.img_size, hparams.img_size, 1), dtype='uint8')
         mask = cal_mouth_contour_mask(white_mask, landmarks, hparams.img_size, hparams.img_size)
         masked_face = face * mask
-        masked_face = torch.FloatTensor(masked_face)
-        mask = torch.FloatTensor(mask)
+        masked_face = (torch.FloatTensor(masked_face) / 255.0).permute((2, 0, 1))
+        mask = torch.FloatTensor(mask).permute((2, 0, 1))
+        face = (torch.FloatTensor(face) / 255.0).permute((2, 0, 1))
 
-        return masked_face, mel, img, coords, mask
+        return masked_face, face, mel, img, coords, mask
 
 
 class FaceConfigReferenceStream(object):
@@ -373,6 +374,9 @@ class FaceConfigReferenceStream(object):
         self.config_path = config_path
         self.config, _ = read_face_config(config_path)
         self.video_len = len(self.config)
+
+    def __len__(self):
+        return self.video_len
 
     def __getitem__(self, idx):
         row = self.config.iloc[idx]

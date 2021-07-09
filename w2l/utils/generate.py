@@ -90,18 +90,17 @@ def datagen(config_path, mels, batch_size=128, start_frame=0):
         stream,
         num_workers=0, batch_size=batch_size)
 
-    for x, mel_batch, frame_batch, coords_batch, masks in stream_loader:
-        B = x.size(0)
-        x = (x / 255.).permute((0, 3, 1, 2))
+    for masked_x, x, mel_batch, frame_batch, coords_batch, masks in stream_loader:
+        B = masked_x.size(0)
         mel_batch = torch.reshape(
             mel_batch, [B, 1, hparams.num_mels, hparams.syncnet_mel_step_size])
-        half_masks = masks[:, hparams.half_img_size:].permute((0, 3, 1, 2))
+        half_masks = masks[:, :, hparams.half_img_size:]
 
         # img_batch: (B, 6, H, W)
         # mouth_mask_batch: (B, 1, H, W)
         # mel_batch: (B, 1, 80, 16)
         # coords_batch: (B, 4)
-        yield x, half_masks, mel_batch, frame_batch, coords_batch
+        yield masked_x, x, half_masks, mel_batch, frame_batch, coords_batch
 
 
 def create_ellipse_filter():
@@ -165,15 +164,22 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
     n_frames = stream.video_len
 
     with torch.no_grad():
-        for ref in stream_loader:
-            B = ref.size(0)
-            emb = model.forward_reference(ref) * float(B / n_frames)
-            if reference_embedding is None:
-                reference_embedding = emb
-            else:
-                reference_embedding += emb
+        refs = []
+        for i, ref in enumerate(tqdm(stream_loader, desc="extract ref embedding")):
+            refs.append(ref.unsqueeze(1))
+            if i % hparams.syncnet_T == hparams.syncnet_T - 1:
+                refs = torch.cat(refs, dim=1)
+                B = ref.size(0)
 
-    for i, (img_batch, half_masks, mel_batch, frames, coords) in enumerate(
+                refs = torch.FloatTensor(refs).permute((0, 1, 4, 2, 3)).to(device) / 255.0
+                emb = model.forward_reference(refs) * float(B / n_frames)
+                if reference_embedding is None:
+                    reference_embedding = emb
+                else:
+                    reference_embedding += emb
+                refs = []
+
+    for i, (masked_img_batch, img_batch, half_masks, mel_batch, frames, coords) in enumerate(
             tqdm(gen, total=len(mel_chunks) // batch_size)):
         if i == 0:
             frame_h, frame_w = frames[0].shape[:-1]
@@ -181,6 +187,7 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
                 'temp/result.avi',
                 cv2.VideoWriter_fourcc(*'FFV1'), face_fps, (frame_w, frame_h))
 
+        masked_img_batch = masked_img_batch.to(device)
         img_batch = img_batch.to(device)
         mel_batch = mel_batch.to(device)
         half_masks = half_masks.to(device)
@@ -188,11 +195,9 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
         with torch.no_grad():
             # dump_face(img_batch, '/hdd/checkpoints/w2l/temp')
             half_pred = model.inference(
-                mel_batch, img_batch, reference_embedding)
+                mel_batch, masked_img_batch, reference_embedding)
 
-            # wrong window is still the real image here
-            half_real_img_batch = img_batch[:, 3:, hparams.half_img_size:]
-            half_pred = lb(half_real_img_batch, half_pred, half_masks)
+            half_pred = lb(img_batch[:, :, hparams.half_img_size:], half_pred, half_masks)
             half_pred = half_pred.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.
 
         for p, f, c in zip(half_pred, frames, coords):
