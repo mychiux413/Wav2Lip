@@ -173,6 +173,7 @@ def generate_video(face_config_path, audio_path, model_path, output_path, face_f
 
                 refs = torch.FloatTensor(refs).permute((0, 1, 4, 2, 3)).to(device) / 255.0
                 emb = model.forward_reference(refs) * float(B / n_frames)
+                emb = emb.reshape((B, 512, 1, 1)).mean(0, keepdim=True)
                 if reference_embedding is None:
                     reference_embedding = emb
                 else:
@@ -239,14 +240,6 @@ def demo(face_config_path, audio_path, model_path, output_path, disc_path, syncn
 
         return loss
 
-    def get_landmarks_loss(g_landmarks, gt_landmarks):
-        # g_landmarks: # (B, T, 14, 2)
-        axis_delta = g_landmarks[:, :, :, 0] - gt_landmarks[:, :, :, 0] + \
-            g_landmarks[:, :, :, 1] - gt_landmarks[:, :, :, 1]
-        square_sum = torch.sum(axis_delta ** 2, dim=2)
-        loss_mean_T = torch.mean(square_sum, dim=1)
-        return loss_mean_T
-
     def get_sync_loss(syncnet, mel, half_g, expect_true=True):
         B = half_g.size(0)
         # half_g: B x T x 3 x H//2 x W
@@ -306,7 +299,7 @@ def demo(face_config_path, audio_path, model_path, output_path, disc_path, syncn
 
         with torch.no_grad():
             # dump_face(img_batch, '/hdd/checkpoints/w2l/temp')
-            half_pred, _ = model(mel_batch, img_batch)
+            half_pred = model(mel_batch, img_batch)
 
         gen_sync_losses = []
         for i in range(len(half_x)):

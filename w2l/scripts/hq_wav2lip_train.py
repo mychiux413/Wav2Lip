@@ -204,6 +204,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
             x = x.to(device)
             ref = ref.to(device)
+            half_ref = ref[:, :, :, hparams.half_img_size:]
             half_x = x[:, :, :, hparams.half_img_size:]
             mel = mel.to(device)
             indiv_mels = indiv_mels.to(device)
@@ -230,7 +231,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             sync_loss = torch.maximum(
                 sync_loss * weights - sync_real_loss, torch.zeros((B,), device=device, dtype=torch.float32))
 
-            perceptual_loss = disc.perceptual_forward(half_g, half_x)
+            perceptual_loss = disc.perceptual_forward(half_g, half_x, half_ref)
             perceptual_loss = perceptual_loss.reshape(
                 (B, hparams.syncnet_T)).mean(1)
 
@@ -257,14 +258,14 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
                 optimizer.step()
                 optimizer.zero_grad()
 
-            pred = disc(half_gt, half_x)
+            pred = disc(half_gt, half_x, half_ref)
             disc_batch_size = pred.size(0)
             y_real = torch.ones((disc_batch_size, 1, 10, 22),
                                 dtype=torch.float32, device=device)
             disc_real_loss = F.binary_cross_entropy(
                 pred, y_real, reduction='none').mean((2, 3))
 
-            pred = disc(half_g.detach(), half_x)
+            pred = disc(half_g.detach(), half_x, half_ref)
             y_fake = torch.zeros((disc_batch_size, 1, 10, 22),
                                  dtype=torch.float32, device=device)
             disc_fake_loss = F.binary_cross_entropy(
@@ -405,6 +406,7 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
 
         x = x.to(device)
         ref = ref.to(device)
+        half_ref = ref[:, :, :, hparams.half_img_size:]
         half_x = x[:, :, :, hparams.half_img_size:]
         mel = mel.to(device)
         indiv_mels = indiv_mels.to(device)
@@ -420,14 +422,14 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         g = torch.cat([upper_gt, half_g], dim=3)
         half_gt = gt[:, :, :, hparams.half_img_size:]
 
-        pred = disc(half_gt, half_x)
+        pred = disc(half_gt, half_x, half_ref)
         disc_batch_size = pred.size(0)
         y_real = torch.ones((disc_batch_size, 1, 10, 22),
                             dtype=torch.float32, device=device)
         disc_real_loss = F.binary_cross_entropy(
             pred, y_real)
 
-        pred = disc(half_g, half_x)
+        pred = disc(half_g, half_x, half_ref)
         y_fake = torch.zeros((disc_batch_size, 1, 10, 22),
                              dtype=torch.float32, device=device)
         disc_fake_loss = F.binary_cross_entropy(
@@ -441,7 +443,7 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
 
         blurs_loss = get_blurs_loss(half_g, blurs_gt, B)
 
-        perceptual_loss = disc.perceptual_forward(half_g, half_x)
+        perceptual_loss = disc.perceptual_forward(half_g, half_x, half_ref)
         perceptual_loss = perceptual_loss.reshape(
             (B, hparams.syncnet_T)).mean(1)
 
