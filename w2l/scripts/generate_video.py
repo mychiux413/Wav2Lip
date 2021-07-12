@@ -2,10 +2,6 @@ import os
 import argparse
 from w2l.hparams import hparams as hp
 from w2l.utils import generate_video, demo
-from w2l.models.wav2lip import Wav2Lip_disc_qual
-from w2l.models.syncnet import SyncNet_color
-from w2l.utils.env import device
-
 import shutil
 import subprocess
 

@@ -65,12 +65,12 @@ class SyncnetDataset(Dataset):
             img_name, wrong_img_name = self.sample_right_wrong_images(
                 img_names)
 
-            window_fnames = self.get_window(img_name, vidname)
+            window_fnames, _ = self.get_window(img_name, vidname)
             if window_fnames is None:
                 idx += 1
                 continue
 
-            false_window_fnames = self.get_window(wrong_img_name, vidname)
+            false_window_fnames, _ = self.get_window(wrong_img_name, vidname)
             if false_window_fnames is None:
                 idx += 1
                 continue
@@ -269,6 +269,10 @@ def stats_blurs(path):
     return os.path.dirname(path), np.mean(arr), np.std(arr)
 
 
+def is_enough_images_in_dir(dirpath):
+    return len(glob(os.path.join(dirpath, '*.jpg'))) >= hp.fps * 1.5
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_root', type=str, required=True)
@@ -405,6 +409,8 @@ def main():
             continue
         for dataname in tqdm(os.listdir(dirpath), desc="[{}] draw and filter".format(dirname), maxinterval=128):
             dataname_path = os.path.join(dirpath, dataname)
+            if not is_enough_images_in_dir(dataname_path):
+                continue
             if args.filter_outbound_lip:
                 if dataname_path not in stats:
                     continue

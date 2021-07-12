@@ -8,7 +8,7 @@ import numpy as np
 from w2l.hparams import hparams
 import torch
 from w2l.utils.facenet import load_facenet_model
-from w2l.utils.data import cal_mouth_mask_pos, cal_mouth_contour_mask
+from w2l.utils.data import cal_mouth_contour_mask
 import json
 
 
@@ -174,9 +174,6 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
     pady1, pady2, padx1, padx2 = pads
     _, frame_count = get_video_fps_and_frame_count(vidpath)
     smoothier = None
-    mouth_smoothier = None
-    # x1_edge = hparams.img_size * hparams.x1_mouth_mask_edge
-    # x2_edge = hparams.img_size * hparams.x2_mouth_mask_edge
     face_size = int(face_size)
     for frames in tqdm(stream_video_as_batch(
             vidpath, face_detect_batch_size, face_detect_batch_size),
@@ -187,23 +184,12 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
                          for frame in frames], dtype=np.float32)
         else:
             x = np.array(frames, dtype=np.float32)
-        # x_for_facenet = np.array(
-        #     [cv2.resize(frame, (112, 112))
-        #      for frame in frames], dtype=np.float32).transpose((0, 3, 1, 2)) / 255.
-        # x_for_facenet = torch.FloatTensor(x_for_facenet).to(device)
-        # x_for_facenet: (B, C, 112, 112)
         if box[0] == -1:
             rects = detector.get_detections_for_batch(x)
             cali_rects = []  # (x1, y1, x2, y2)
             face_paths = []
             img_paths = []
             faces = []
-
-            # with torch.no_grad():
-            #     landmarks_batch = facenet_model(x_for_facenet)[0]
-            #     landmarks_batch = landmarks_batch.reshape(
-            #         len(frames), -1, 2).cpu().numpy()
-            # landmarks positions in the frames
 
             for rect, frame in zip(rects, frames):
                 img_path = os.path.join(dump_dir, "img_{}.png".format(
@@ -239,13 +225,9 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
                         if x1 != -1:
                             smoothier = Smoothier(
                                 x1=x1, x2=x2, y1=y1, y2=y2, T=smooth_size)
-                            # mouth_smoothier = Smoothier(
-                            #     x1=mouth_x1, x2=mouth_x2, y1=mouth_y1, y2=mouth_y2, T=smooth_size)
                     else:
                         x1, x2, y1, y2 = smoothier.smooth(
                             x1=x1, x2=x2, y1=y1, y2=y2)
-                        # mouth_x1, mouth_x2, mouth_y1, mouth_y2 = mouth_smoothier.smooth(
-                        #     x1=mouth_x1, x2=mouth_x2, y1=mouth_y1, y2=mouth_y2)
 
                 x1, x2, y1, y2 = square_positions(x1, x2, y1, y2)
 
@@ -257,15 +239,6 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
                     face = frame[y1:y2, x1:x2]
                     face = cv2.resize(face, (face_size, face_size))
                     faces.append(face)
-
-                    # Debug
-                    # for (_x, _y) in landmarks:
-                    #     _x = int(_x * face_size)
-                    #     _y = int(_y * face_size)
-                    #     face[(_y-2):(_y+2), (_x-2):(_x+2), 1] = 255
-                    # ****
-
-                    # cv2.imwrite(face_path, face)
                 else:
                     faces.append(
                         np.zeros((face_size, face_size, 3), dtype=np.uint8))
@@ -278,28 +251,7 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
                 landmarks_batch = landmarks_batch.reshape(
                     len(frames), -1, 2).cpu().numpy()
             for img_path, face_path, face, (x1, y1, x2, y2), landmarks in zip(img_paths, face_paths, faces, cali_rects, landmarks_batch):
-                # **** mouth *****
-                mouth_x1, mouth_x2, mouth_y1, mouth_y2 = cal_mouth_mask_pos(
-                    landmarks,
-                    hparams.img_size,
-                    hparams.img_size,
-                    )
-                if smooth:
-                    if mouth_smoothier is None:
-                        if x1 != -1:
-                            mouth_smoothier = Smoothier(
-                                x1=mouth_x1, x2=mouth_x2, y1=mouth_y1, y2=mouth_y2, T=smooth_size)
-                    else:
-                        mouth_x1, mouth_x2, mouth_y1, mouth_y2 = mouth_smoothier.smooth(
-                            x1=mouth_x1, x2=mouth_x2, y1=mouth_y1, y2=mouth_y2)
-                # **** mouth ****
                 if x1 != -1:
-                    # Debug
-                    # for (_x, _y) in landmarks:
-                    #     _x = int(_x * face_size)
-                    #     _y = int(_y * face_size)
-                    #     face[(_y-2):(_y+2), (_x-2):(_x+2), 1] = 255
-                    # ****
                     cv2.imwrite(face_path, face)
 
                 rows.append({
@@ -309,10 +261,6 @@ def detect_face_and_dump_from_video(vidpath, dump_dir, device, face_size, face_d
                     'x2': x2,
                     'y1': y1,
                     'y2': y2,
-                    'mouth_x1': mouth_x1,
-                    'mouth_x2': mouth_x2,
-                    'mouth_y1': mouth_y1,
-                    'mouth_y2': mouth_y2,
                     'landmarks': landmarks,
                 })
         else:
@@ -406,19 +354,42 @@ class FaceConfigStream(object):
             face = np.zeros(
                 (hparams.img_size, hparams.img_size, 3), dtype='uint8')
         x1, x2, y1, y2 = (row['x1'], row['x2'], row['y1'], row['y2'])
-        # mouth_x1, mouth_x2, mouth_y1, mouth_y2 = (
-        #     row['mouth_x1'], row['mouth_x2'], row['mouth_y1'], row['mouth_y2'])
 
         mel = torch.FloatTensor(mel)
         img = torch.IntTensor(img)
         coords = torch.IntTensor([y1, y2, x1, x2])
-        # mouths = torch.IntTensor([mouth_x1, mouth_x2, mouth_y1, mouth_y2])
         landmarks = row['landmarks']
         white_mask = np.ones((hparams.img_size, hparams.img_size, 1), dtype='uint8')
-        mask = cal_mouth_contour_mask(white_mask.copy(), landmarks, hparams.img_size, hparams.img_size)
-        masked_face = face.copy() * mask
-        x = np.concatenate((masked_face, face), axis=2)
-        x = torch.FloatTensor(x)
-        mask = torch.FloatTensor(mask)
+        mask = cal_mouth_contour_mask(
+            white_mask, landmarks, hparams.img_size, hparams.img_size,
+            shrink_width_ratio=0.1,
+            expand_height_ratio=0.0,
+        )
+        masked_face = face * mask
+        masked_face = (torch.FloatTensor(masked_face) / 255.0).permute((2, 0, 1))
+        mask = torch.FloatTensor(mask).permute((2, 0, 1))
+        face = (torch.FloatTensor(face) / 255.0).permute((2, 0, 1))
+        x = torch.cat([masked_face, face], dim=0)
 
-        return x, mel, img, coords, mask
+        return x, face, mel, img, coords, mask
+
+
+class FaceConfigReferenceStream(object):
+    def __init__(self, config_path):
+        self.config_path = config_path
+        self.config, _ = read_face_config(config_path)
+        self.video_len = len(self.config)
+
+    def __len__(self):
+        return self.video_len
+
+    def __getitem__(self, idx):
+        row = self.config.iloc[idx]
+        if not pd.isna(row['face_path']):
+            face = cv2.imread(row['face_path'])
+        else:
+            face = np.zeros(
+                (hparams.img_size, hparams.img_size, 3), dtype='uint8')
+        face = torch.FloatTensor(face)
+
+        return face

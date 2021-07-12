@@ -164,13 +164,18 @@ def load_and_dump_mel(vidname):
     if os.path.exists(mel_path):
         try:
             orig_mel = np.load(mel_path)
+            return vidname
         except Exception as err:
-            print(err)
-            wav = load_wav(wavpath, hp.sample_rate)
-            orig_mel = melspectrogram(wav).T
-            np.save(mel_path, orig_mel)
-    else:
+            print("load mel {} got error: {}".format(
+                mel_path, err,
+            ))
+
+    try:
         wav = load_wav(wavpath, hp.sample_rate)
         orig_mel = melspectrogram(wav).T
         np.save(mel_path, orig_mel)
+    except Exception as err:
+        err = "load wav `{}` got error: {}".format(
+            wavpath, err)
+        raise AssertionError(err)
     return vidname
