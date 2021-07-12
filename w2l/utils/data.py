@@ -1,5 +1,5 @@
-from os.path import dirname, join, basename, isfile
-from w2l.models import syncnet
+from os.path import join, basename, isfile
+
 from tqdm import tqdm
 from w2l.utils import audio
 
@@ -14,7 +14,6 @@ import cv2
 from w2l.hparams import hparams
 import torchvision
 from multiprocessing import Pool
-from collections import defaultdict
 
 augment_for_wav2lip = torchvision.transforms.Compose([
     torchvision.transforms.ColorJitter(brightness=(
@@ -97,27 +96,61 @@ class LandMarks(dict):
         return np.load(path, allow_pickle=True).tolist()
 
 
-def cal_mouth_mask_pos(mouth_landmarks, img_height, img_width, x1_mask_edge, x2_mask_edge):
-    # print(49, 0.5 - mouth_landmarks[0, 0], mouth_landmarks[0, 1], 55, mouth_landmarks[6, 0] - 0.5, mouth_landmarks[6, 1])
-    mouth_x1 = min(mouth_landmarks[:, 0]) * img_width
-    mouth_x2 = max(mouth_landmarks[:, 0]) * img_width
-    mouth_y1 = min(mouth_landmarks[:, 1]) * img_height
-    mouth_y2 = max(mouth_landmarks[:, 1]) * img_height
-    mouth_width = mouth_x2 - mouth_x1
-    mouth_height = mouth_y2 - mouth_y1
-    mouth_height = min(40, mouth_height)
-    mouth_x1 = min(x1_mask_edge, int(mouth_x1 - mouth_width *
-                                     hparams.expand_mouth_width_ratio - 5))
-    mouth_x1 = max(mouth_x1, 0)
-    mouth_x2 = max(x2_mask_edge, int(
-        mouth_x2 + mouth_width * hparams.expand_mouth_width_ratio + 5))
-    mouth_x2 = min(mouth_x2, img_width)
-    mouth_y1 = max(img_height // 2, int(mouth_y1 - mouth_height *
-                                        hparams.expand_mouth_height_ratio - 5))
-    mouth_y2 = min(img_height, int(
-        mouth_y2 + mouth_height * hparams.expand_mouth_height_ratio + 5))
+class Blurs(dict):
+    def __setitem__(self, key, value):
+        self.__dict__[key] = value
+
+    def __getitem__(self, key):
+        path = self.__dict__[key]
+        return np.load(path, allow_pickle=True).tolist()
+
+
+def cal_mouth_mask_pos(landmarks, img_height, img_width):
+    # mouth_landmarks = landmarks[48:]
+    x1_mask_edge = landmarks[3, 0]
+    x2_mask_edge = landmarks[13, 0]
+    y_nose = landmarks[33, 1]
+    y_chin = landmarks[8, 1]
+
+    x1_mask_edge = int(x1_mask_edge * img_width + 5)
+    x2_mask_edge = int(x2_mask_edge * img_width - 5)
+    y1_mask_edge = int(y_nose * img_height)
+    y2_mask_edge = int(y_chin * img_height - 10)
+
+    mouth_x1, mouth_x2, mouth_y1, mouth_y2 = x1_mask_edge, x2_mask_edge, y1_mask_edge, y2_mask_edge
+
+    mouth_x1 = max(0, mouth_x1)
+    mouth_x2 = min(img_width, mouth_x2)
+    mouth_y1 = max(img_height // 2, mouth_y1)
+    mouth_y2 = min(img_height, mouth_y2)
 
     return mouth_x1, mouth_x2, mouth_y1, mouth_y2
+
+
+def cal_mouth_contour_mask(white_mask, landmarks, img_height, img_width,
+                           shrink_width_ratio=0.05, expand_height_ratio=0.1):
+    """In cv2 format (H, W, C)"""
+    # mouth_landmarks = landmarks[48:]
+    delta_face_width = (landmarks[14, 0] -
+                        landmarks[2, 0]) * shrink_width_ratio
+    delta_face_height = (landmarks[33, 1] -
+                         landmarks[8, 1]) * expand_height_ratio
+    mouth_contours = [[
+        [landmarks[2, 0] + delta_face_width, landmarks[2, 1]],
+        [landmarks[4, 0] + delta_face_width, landmarks[5, 1]],
+        [landmarks[8, 0], landmarks[8, 1] - delta_face_height],
+        [landmarks[12, 0] - delta_face_width, landmarks[11, 1]],
+        [landmarks[14, 0] - delta_face_width, landmarks[14, 1]],
+        [landmarks[33, 0], min(landmarks[33, 1] + delta_face_height, landmarks[2, 1], landmarks[14, 1])],
+    ]]
+    mouth_contours = np.array(mouth_contours, dtype=np.float)
+    mouth_contours[0, :, 0] = mouth_contours[0, :, 0] * img_width
+    mouth_contours[0, :, 1] = np.maximum(
+        mouth_contours[0, :, 1], 0.5) * img_height
+    mouth_contours = mouth_contours.astype(np.int32)
+    white_mask = cv2.drawContours(
+        white_mask, mouth_contours, -1, (0, 0, 0), -1)
+    return white_mask
 
 
 class Dataset(object):
@@ -125,27 +158,35 @@ class Dataset(object):
     syncnet_T = hparams.syncnet_T
     syncnet_mel_step_size = hparams.syncnet_mel_step_size
     use_landmarks = True
+    use_blurs = True
 
     def __init__(self, split, data_root, inner_shuffle=True,
                  limit=0, sampling_half_window_size_seconds=2.0,
                  img_augment=True,
-                 filelists_dir='filelists'):
+                 filelists_dir='filelists',
+                 use_syncnet_weights=True,
+                 trivial=False):
         self.all_videos = list(filter(
-            lambda vidname: os.path.exists(join(vidname, "audio.ogg")),
+            lambda vidname: os.path.exists(join(vidname, "blur.npy")),
             get_image_list(data_root, split, limit=limit, filelists_dir=filelists_dir)))
         assert len(self.all_videos) > 0, "no video dirs found from: {} with filelists_dir: {}".format(
             data_root, filelists_dir,
         )
+        self.trivial = trivial
+        if trivial:
+            print("!!!!!!!! TRIVIAL MODE !!!!!!!!")
         self.synclosses = {}
         synclosses_path = os.path.join(data_root, "synclosses.npy")
-        if os.path.exists(synclosses_path):
-            self.synclosses = np.load(synclosses_path, allow_pickle=True).tolist()
+        if os.path.exists(synclosses_path) and use_syncnet_weights:
+            self.synclosses = np.load(
+                synclosses_path, allow_pickle=True).tolist()
             videos_set = set(self.all_videos)
             drops = []
 
             keys = list(self.synclosses.keys())
             for key in keys:
-                self.synclosses[os.path.join(data_root, key)] = self.synclosses.pop(key)
+                self.synclosses[os.path.join(
+                    data_root, key)] = self.synclosses.pop(key)
 
             for vidname in self.synclosses.keys():
                 if vidname not in videos_set:
@@ -164,7 +205,8 @@ class Dataset(object):
             max_mean_syncloss = max(means)
             width = max_mean_syncloss - min_mean_syncloss
             for vidname in self.synclosses.keys():
-                self.synclosses[vidname] = max(0.0, (self.synclosses[vidname] - max_mean_syncloss) * -1.0 / width)
+                self.synclosses[vidname] = max(
+                    0.0, (self.synclosses[vidname] - max_mean_syncloss) * -1.0 / width)
 
         self.img_names = {}
         self.orig_mels = Mels()
@@ -175,7 +217,7 @@ class Dataset(object):
                     chunksize=128):
                 self.img_names[vidname] = imgs
             for vidname in p.imap_unordered(
-                    audio.load_and_dump_mel, tqdm(self.all_videos, desc="load mels"), chunksize=128):
+                    audio.load_and_dump_mel, tqdm(self.all_videos, desc="load mels"), chunksize=128):                    
                 self.orig_mels[vidname] = None
         self.landmarks = LandMarks()
         if self.use_landmarks:
@@ -184,6 +226,15 @@ class Dataset(object):
                 self.landmarks[vidname] = join(vidname, "landmarks.npy")
         for vidname in self.landmarks.keys():
             assert vidname in self.orig_mels, "vidname {} is in landmarks but not in orig_mels".format(
+                vidname)
+
+        self.blurs = Blurs()
+        if self.use_blurs:
+            print("load blurs")
+            for vidname in self.all_videos:
+                self.blurs[vidname] = join(vidname, "blur.npy")
+        for vidname in self.blurs.keys():
+            assert vidname in self.blurs, "vidname {} is in blurs but not in orig_mels".format(
                 vidname)
 
         self.img_size = hparams.img_size
@@ -197,8 +248,8 @@ class Dataset(object):
         self.img_augment = img_augment
         self.data_len = len(self.all_videos)
         self.videos_len = len(self.all_videos)
-        if self.data_len < 20000:
-            self.data_len = min(20000, int(
+        if self.data_len < 10000:
+            self.data_len = min(10000, int(
                 sum([len(self.img_names[v]) for v in self.all_videos]) / self.syncnet_T))
         print("data length: ", self.data_len)
 
@@ -218,12 +269,19 @@ class Dataset(object):
         start_id = self.get_frame_id(start_frame)
 
         window_fnames = []
+        window_base_fnames = []
         for frame_id in range(start_id, start_id + self.syncnet_T):
-            frame = join(vidname, '{}.jpg'.format(frame_id))
+            fname = '{}.jpg'.format(frame_id)
+            frame = join(vidname, fname)
             if not isfile(frame):
-                return None
+                return None, None
             window_fnames.append(frame)
-        return window_fnames
+            window_base_fnames.append(fname)
+        return window_fnames, window_base_fnames
+
+    def random_sample_window(self, vidname):
+        imgs = self.img_names[vidname]
+        return np.random.choice(imgs, hparams.syncnet_T, replace=False)
 
     def read_window(self, window_fnames):
         # output: [(H, W, 3), ...]
@@ -292,25 +350,29 @@ class Dataset(object):
                self.fringe_x1:self.fringe_x2] = 0.
         return window
 
-    def mask_mouth(self, window, vidname, window_fnames):
-        fnames = list(map(os.path.basename, window_fnames))
-        landmarks = [self.landmarks[vidname][fname] for fname in fnames]
+    def get_blurs(self, vidname, window_base_fnames):
+        return [self.blurs[vidname][fname] for fname in window_base_fnames]
+
+    def mask_mouth(self, window, vidname, window_base_fnames):
+        landmarks = [self.landmarks[vidname][fname]
+                     for fname in window_base_fnames]
         # masks = []
+        white_mask = np.ones((self.img_size, self.img_size, 1), dtype=np.uint8)
+        masks = []
         for i, landmark in enumerate(landmarks):
-            mouth_landmark = landmark[48:]
-            mouth_x1, mouth_x2, mouth_y1, mouth_y2 = cal_mouth_mask_pos(
-                mouth_landmark,
-                self.img_size,
-                self.img_size,
-                self.x1_mask_edge,
-                self.x2_mask_edge)
+            mask = cal_mouth_contour_mask(
+                white_mask.copy(), landmark,
+                self.img_size, self.img_size,
+                shrink_width_ratio=0.025,
+                expand_height_ratio=0.125,
+            )
+            mask = np.transpose(mask, (2, 0, 1)).astype(np.float)
+            masks.append(mask)
 
             if window is not None:
-                window[i, :, mouth_y1:mouth_y2, mouth_x1:mouth_x2] = 0.
+                window[i] *= mask
 
-        target_landmarks = [landmark[hparams.landmarks_points]
-                            for landmark in landmarks]
-        return window, target_landmarks
+        return window, np.asfarray(masks)
 
     def __len__(self):
         return self.data_len
@@ -345,12 +407,14 @@ class Wav2LipDataset(Dataset):
             vidname = self.get_vidname(idx)
             img_names = self.img_names[vidname]
 
-            img_name, wrong_img_name = self.sample_right_wrong_images(
+            img_name, _ = self.sample_right_wrong_images(
                 img_names)
 
-            window_fnames = self.get_window(img_name, vidname)
-            wrong_window_fnames = self.get_window(wrong_img_name, vidname)
-            if window_fnames is None or wrong_window_fnames is None:
+            window_fnames, window_base_fnames = self.get_window(
+                img_name, vidname)
+
+            random_window_fnames = self.random_sample_window(vidname)
+            if window_fnames is None or random_window_fnames is None:
                 idx += 1
                 continue
 
@@ -359,8 +423,8 @@ class Wav2LipDataset(Dataset):
                 idx += 1
                 continue
 
-            wrong_window = self.read_window(wrong_window_fnames)
-            if wrong_window is None:
+            random_window = self.read_window(random_window_fnames)
+            if random_window is None:
                 idx += 1
                 continue
 
@@ -378,33 +442,40 @@ class Wav2LipDataset(Dataset):
 
             window = self.prepare_window(window)  # T x 3 x H x W
             y = torch.FloatTensor(window)
-            wrong_window = self.prepare_window(wrong_window)  # T x 3 x H x W
+            random_window = self.prepare_window(random_window)  # T x 3 x H x W
 
-            cat = np.concatenate([window, wrong_window, y], axis=0)
+            cat = np.concatenate([window, random_window, y], axis=0)
             cat = torch.FloatTensor(cat)
             if self.img_augment:
                 cat = self.augment_window(cat)
 
-            window = cat[:self.syncnet_T, :, :, :]
-            wrong_window = cat[self.syncnet_T:(self.syncnet_T * 2):, :, :]
-            y = cat[(self.syncnet_T * 2):, :, :, :]
+            window = cat[:self.syncnet_T]
+            random_window = cat[self.syncnet_T:(self.syncnet_T * 2)]
+            y = cat[(self.syncnet_T * 2):]
 
-            window, landmarks = self.mask_mouth(
-                window, vidname, window_fnames)
+            if self.trivial:
+                unmasked_window = window.clone()
 
-            x = torch.cat([window, wrong_window], axis=1)
+            window, masks = self.mask_mouth(
+                window, vidname, window_base_fnames)
 
             mel = torch.FloatTensor(mel.T).unsqueeze(0)
             indiv_mels = torch.FloatTensor(indiv_mels).unsqueeze(1)
-            landmarks = torch.FloatTensor(landmarks)
+
+            blurs = self.get_blurs(vidname, window_base_fnames)
+            blurs = torch.FloatTensor(blurs)
 
             data_weight = self.get_data_weight(vidname)
 
+            x = torch.cat([window, random_window if not self.trivial else unmasked_window], dim=1)
+
             # x: (T, 6, H, W)
+            # wrong_window: (T, 3, H, W)
             # y: (T, 3, H, W)
             # indiv_mels: (T, 1, 80, 16)
             # mel: (1, 80, 16)
-            return x, indiv_mels, mel, y, landmarks, data_weight
+            # masks: (T, 1, H, W)
+            return x, random_window, indiv_mels, mel, y, blurs, data_weight, masks
 
 
 class SyncnetDataset(Dataset):
@@ -421,12 +492,12 @@ class SyncnetDataset(Dataset):
             img_name, wrong_img_name = self.sample_right_wrong_images(
                 img_names)
 
-            window_fnames = self.get_window(img_name, vidname)
+            window_fnames, _ = self.get_window(img_name, vidname)
             if window_fnames is None:
                 idx += 1
                 continue
 
-            false_window_fnames = self.get_window(wrong_img_name, vidname)
+            false_window_fnames, _ = self.get_window(wrong_img_name, vidname)
             if false_window_fnames is None:
                 idx += 1
                 continue
@@ -475,8 +546,6 @@ class SyncnetDataset(Dataset):
             orig_mel = self.orig_mels[vidname]
             mel = self.crop_audio_window(orig_mel, img_name)
 
-            # dump_as_video(window_fnames, vidname, self.get_frame_id(img_name), orig_mel)
-
             if (mel.shape[0] != self.syncnet_mel_step_size):
                 idx += 1
                 continue
@@ -489,19 +558,3 @@ class SyncnetDataset(Dataset):
             data_weight = self.get_data_weight(vidname)
 
             return x, mel, data_weight
-
-
-# def dump_as_video(window_fnames, vidname, start_frame_num, spec):
-#     from pydub import AudioSegment
-#     start_idx = int(80. * (start_frame_num / float(hparams.fps)))
-#     end_idx = start_idx + hparams.syncnet_mel_step_size
-#     spec_len = len(spec)
-#     print("window_fnames", window_fnames)
-#     print("vidname", vidname)
-#     audio_path = os.path.join(vidname, "audio.ogg")
-#     sound = AudioSegment.from_file(audio_path)
-#     sound_len = len(sound)
-#     chunk_start = int(sound_len * start_idx / spec_len)
-#     chunk_end = int(sound_len * end_idx / spec_len)
-#     chunk = sound[chunk_start:chunk_end]
-#     chunk.export('')

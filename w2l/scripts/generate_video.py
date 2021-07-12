@@ -1,7 +1,7 @@
 import os
 import argparse
 from w2l.hparams import hparams as hp
-from w2l.utils import generate_video
+from w2l.utils import generate_video, demo
 import shutil
 import subprocess
 
@@ -28,6 +28,10 @@ def main():
                         help='Specify output crf', default=0)
     parser.add_argument('--start_seconds', type=float,
                         help='Specify start seconds of video', default=0.0)
+    parser.add_argument('--syncnet', type=str, required=False,
+                        default=None, help='syncnet model')
+    parser.add_argument('--disc', type=str, required=False,
+                        default=None, help='discriminator')
     parser.add_argument('--remove_face_dump_dir', action='store_true')
     args = parser.parse_args()
 
@@ -38,11 +42,20 @@ def main():
 
         subprocess.call(command, shell=True)
         args.audio = 'temp/temp.wav'
-    generate_video(args.face_config_path, args.audio, args.checkpoint_path, args.outfile,
-                   batch_size=args.batch_size, num_mels=hp.num_mels,
-                   mel_step_size=hp.syncnet_mel_step_size, sample_rate=hp.sample_rate,
-                   output_fps=args.output_fps, output_crf=args.output_crf,
-                   start_seconds=args.start_seconds)
+
+    if args.syncnet is None and args.disc is None:
+        generate_video(args.face_config_path, args.audio, args.checkpoint_path, args.outfile,
+                       batch_size=args.batch_size, num_mels=hp.num_mels,
+                       mel_step_size=hp.syncnet_mel_step_size, sample_rate=hp.sample_rate,
+                       output_fps=args.output_fps, output_crf=args.output_crf,
+                       start_seconds=args.start_seconds)
+    else:
+        demo(args.face_config_path, args.audio, args.checkpoint_path, args.outfile,
+             args.disc, args.syncnet,
+             batch_size=args.batch_size, num_mels=hp.num_mels,
+             mel_step_size=hp.syncnet_mel_step_size, sample_rate=hp.sample_rate,
+             output_fps=args.output_fps, output_crf=args.output_crf,
+             start_seconds=args.start_seconds)
     if args.remove_face_dump_dir:
         config_dir = os.path.dirname(args.face_config_path)
         shutil.rmtree(config_dir)

@@ -43,10 +43,13 @@ class HParams:
                     break
         # *************************
 
-    def to_json(self, path):
-        print("dump hparams to: {}".format(path))
-        with open(path, 'w') as f:
-            json.dump(self.data, f, indent=4, ensure_ascii=False)
+    def to_json(self, path=None):
+        output = json.dumps(self.data, indent=4, ensure_ascii=False)
+        if path is not None:
+            print("dump hparams to: {}".format(path))
+            with open(path, 'w') as f:
+                f.write(output)
+        return output
 
     @classmethod
     def from_json(cls, path):
@@ -165,8 +168,7 @@ hparams = HParams(
 
     l1_wt=0.5,
     ssim_wt=0.5,
-    landmarks_wt=10.0,
-    landmarks_points=[2, 5, 8, 11, 14, 31, 33, 35, 48, 51, 54, 57, 62, 66],
+    blurs_wt=0.001,
 )
 
 

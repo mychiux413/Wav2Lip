@@ -2,7 +2,6 @@ from os.path import join
 from tqdm import tqdm
 
 from w2l.models import SyncNet_color as SyncNet
-from w2l.models import SyncNet_shuffle_color
 
 import torch
 from torch import nn
@@ -40,7 +39,6 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
 
     model.train()
     global global_step, global_epoch
-    # resumed_step = global_step
 
     if hparams.warm_up_epochs > 0:
         C = np.log(hparams.syncnet_lr /
@@ -83,7 +81,6 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             y_true = torch.ones((B, 1), dtype=torch.float32, device=device)
             y_false = torch.zeros((B, 1), dtype=torch.float32, device=device)
 
-            # Transform data to CUDA device
             x_true = x_true.to(device)
             x_false = x_false.to(device)
 
@@ -94,7 +91,6 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             loss_true = (cosine_loss(a, v, y_true) * weights).mean()
             a, v = model(mel, x_false)
             loss_false = (cosine_loss(a, v, y_false) * weights).mean()
-            # y = y.to(device)
 
             loss = (loss_true * 0.55 + loss_false * 0.45) / K
             loss.backward()
@@ -104,7 +100,6 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
                 optimizer.zero_grad()
 
             global_step += 1
-            # cur_session_steps = global_step - resumed_step
             running_loss += loss.detach()
             running_fake_loss += loss_false.detach()
             running_real_loss += loss_true.detach()
@@ -151,6 +146,7 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir,
                 continue
 
             # x_true B x T x 3 x H x W
+            x = x.to(device)
             x_true = x[:, :hparams.syncnet_T, :]
             x_false = x[:, hparams.syncnet_T:, :]
             x_true = x_true.reshape(
@@ -159,16 +155,10 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir,
                 (B, hparams.syncnet_T * 3, half_img_size, hparams.img_size))
             y_true = torch.ones((B, 1), dtype=torch.float32, device=device)
             y_false = torch.zeros((B, 1), dtype=torch.float32, device=device)
-            # x = torch.cat([
-            #     x_true,
-            #     x_false,
-            # ], dim=0)
 
             model.eval()
 
             # Transform data to CUDA device
-            # x = x.to(device)
-
             mel = mel.to(device)
             weights = weights.to(device)
 
@@ -177,10 +167,6 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir,
             a, v = model(mel, x_false)
             loss_false = (cosine_loss(a, v, y_false) * weights).mean()
 
-            # a, v = model(mel, x)
-            # y = y.to(device)
-
-            # loss = cosine_loss(a, v, y)
             _t = loss_true.detach()
             _f = loss_false.detach()
             losses.append(_t * 0.55 + _f * 0.45)
@@ -277,8 +263,10 @@ def main(args=None):
                             type=str, default=None)
         parser.add_argument('--K',
                             help='Delay update', type=int, default=1)
-        parser.add_argument('--shufflenet',
-                            help='Use Shuffle net as faceencoder', action='store_true')
+        parser.add_argument('--use_syncnet_weights',
+                            help='Use syncnet weights in training', action='store_true')
+        parser.add_argument('--logdir',
+                            help='Tensorboard logdir', default=None, type=str)
 
         args = parser.parse_args()
 
@@ -291,6 +279,8 @@ def main(args=None):
     now = datetime.now()
     log_dir = os.path.join(
         checkpoint_dir, "log-syncnet-{}".format(now.strftime("%Y-%m-%d-%H_%M")))
+    if args.logdir is not None:
+        log_dir = args.logdir
     print("log at: {}".format(log_dir))
     summary_writer = SummaryWriter(log_dir)
 
@@ -307,13 +297,15 @@ def main(args=None):
         img_augment=hparams.img_augment,
         sampling_half_window_size_seconds=1e10,
         filelists_dir=args.filelists_dir,
-        inner_shuffle=False)
+        inner_shuffle=False,
+        use_syncnet_weights=args.use_syncnet_weights)
     val_dataset = SyncnetDataset(
         'val', args.data_root, limit=args.val_limit,
         sampling_half_window_size_seconds=1e10,
         img_augment=False,
         filelists_dir=args.filelists_dir,
-        inner_shuffle=False)
+        inner_shuffle=False,
+        use_syncnet_weights=False)
 
     def worker_init_fn(i):
         seed = int(time()) + i * 100
@@ -336,11 +328,7 @@ def main(args=None):
         worker_init_fn=worker_init_fn)
 
     # Model
-    if args.shufflenet:
-        print("**** Enable ShuffleNet V2 1.0 as syncnet ****")
-        model = SyncNet_shuffle_color().to(device)
-    else:
-        model = SyncNet().to(device)
+    model = SyncNet().to(device)
 
     print('total trainable params {}'.format(sum(p.numel()
           for p in model.parameters() if p.requires_grad)))

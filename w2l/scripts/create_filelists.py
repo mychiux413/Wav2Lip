@@ -65,12 +65,12 @@ class SyncnetDataset(Dataset):
             img_name, wrong_img_name = self.sample_right_wrong_images(
                 img_names)
 
-            window_fnames = self.get_window(img_name, vidname)
+            window_fnames, _ = self.get_window(img_name, vidname)
             if window_fnames is None:
                 idx += 1
                 continue
 
-            false_window_fnames = self.get_window(wrong_img_name, vidname)
+            false_window_fnames, _ = self.get_window(wrong_img_name, vidname)
             if false_window_fnames is None:
                 idx += 1
                 continue
@@ -269,6 +269,10 @@ def stats_blurs(path):
     return os.path.dirname(path), np.mean(arr), np.std(arr)
 
 
+def is_enough_images_in_dir(dirpath):
+    return len(glob(os.path.join(dirpath, '*.jpg'))) >= hp.fps * 1.5
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_root', type=str, required=True)
@@ -294,7 +298,7 @@ def main():
                         help='Specify the epoch to evaluate cosine loss', default=10, type=int)
     parser.add_argument('--min_img_size',
                         help='', default=0, type=int)
-    parser.add_argument('--min_mean_blur_score',
+    parser.add_argument('--max_mean_blur_score',
                         help='', default=0, type=float)
     parser.add_argument('--blur_score_q_cut',
                         help='', default=1.0, type=float)
@@ -369,19 +373,24 @@ def main():
             "max_mean_x", max_mean_x,
             "max_std_x", max_std_x,
         )
-    if args.min_mean_blur_score > 0 or args.blur_score_q_cut < 1.0:
+
+    max_mean_blur = 1e8
+    if args.max_mean_blur_score > 0:
+        max_mean_blur = args.max_mean_blur_score
+    if args.blur_score_q_cut < 1.0:
         blur_paths = glob(os.path.join(args.data_root, "**/**/blur.npy"))
         blurs_mean = {}
-        blurs_std = {}
+        # blurs_std = {}
         with Pool() as p:
-            for dirpath, mean, std in p.imap_unordered(
+            for dirpath, mean, _ in p.imap_unordered(
                     stats_blurs, tqdm(blur_paths, desc="load blurs"), chunksize=128):
                 if dirpath is None:
                     continue
                 blurs_mean[dirpath] = mean
-                blurs_std[dirpath] = std
-        max_std_blur = np.quantile(
-            list(blurs_std.values()), q=args.blur_score_q_cut)
+                # blurs_std[dirpath] = std
+        max_mean_blur = min(max_mean_blur, np.quantile(
+            list(blurs_mean.values()), q=args.blur_score_q_cut))
+    print("drop blurs over than:", max_mean_blur)
     i_train = 0
     i_val = 0
     train_lines = []
@@ -400,6 +409,8 @@ def main():
             continue
         for dataname in tqdm(os.listdir(dirpath), desc="[{}] draw and filter".format(dirname), maxinterval=128):
             dataname_path = os.path.join(dirpath, dataname)
+            if not is_enough_images_in_dir(dataname_path):
+                continue
             if args.filter_outbound_lip:
                 if dataname_path not in stats:
                     continue
@@ -413,9 +424,7 @@ def main():
                     continue
                 if stats[dataname_path][0, 0, 1] > max_std_x:
                     continue
-                if args.min_mean_blur_score > 0 and blurs_mean[dataname_path] < args.min_mean_blur_score:
-                    continue
-                if args.blur_score_q_cut < 1.0 and blurs_std[dataname_path] > max_std_blur:
+                if args.blur_score_q_cut < 1.0 and blurs_mean[dataname_path] > max_mean_blur:
                     continue
             line = os.path.join(dirname, dataname)
             if args.syncnet_checkpoint_path is not None:
