@@ -68,7 +68,10 @@ def save_sample_images(x, refs, g, gt, global_step, checkpoint_dir, summary_writ
     if not os.path.exists(folder):
         os.mkdir(folder)
 
-    collage = np.concatenate((refs, x, g, gt), axis=-2)
+    window = x[:, :, :, :, :3]
+    wrong_window = x[:, :, :, :, 3:]
+
+    collage = np.concatenate((refs, wrong_window, window, g, gt), axis=-2)
     for batch_idx, c in enumerate(collage):
         marked_images = []
         for t in range(len(c)):
@@ -601,6 +604,8 @@ def main(args=None):
                             type=str, default=None)
         parser.add_argument('--use_syncnet_weights',
                             help='Use Syncnet Weights for training', action='store_true')
+        parser.add_argument('--trivial',
+                            help='Trivial Training', action='store_true')
         parser.add_argument('--logdir',
                             help='Tensorboard logdir', default=None, type=str)
         args = parser.parse_args()
@@ -631,7 +636,8 @@ def main(args=None):
         filelists_dir=args.filelists_dir,
         img_augment=hparams.img_augment,
         inner_shuffle=False,
-        use_syncnet_weights=args.use_syncnet_weights)
+        use_syncnet_weights=args.use_syncnet_weights,
+        trivial=args.trivial)
     test_dataset = Wav2LipDataset(
         'val', args.data_root,
         sampling_half_window_size_seconds=hparams.sampling_half_window_size_seconds,
@@ -639,7 +645,8 @@ def main(args=None):
         limit=300,  # val steps
         filelists_dir=args.filelists_dir,
         inner_shuffle=False,
-        use_syncnet_weights=False)
+        use_syncnet_weights=False,
+        trivial=args.trivial)
 
     def worker_init_fn(i):
         seed = int(time()) + i * 100

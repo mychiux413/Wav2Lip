@@ -141,7 +141,7 @@ def cal_mouth_contour_mask(white_mask, landmarks, img_height, img_width,
         [landmarks[8, 0], landmarks[8, 1] - delta_face_height],
         [landmarks[12, 0] - delta_face_width, landmarks[11, 1]],
         [landmarks[14, 0] - delta_face_width, landmarks[14, 1]],
-        [landmarks[33, 0], landmarks[33, 1] + delta_face_height],
+        [landmarks[33, 0], min(landmarks[33, 1] + delta_face_height, landmarks[2, 1], landmarks[14, 1])],
     ]]
     mouth_contours = np.array(mouth_contours, dtype=np.float)
     mouth_contours[0, :, 0] = mouth_contours[0, :, 0] * img_width
@@ -164,13 +164,17 @@ class Dataset(object):
                  limit=0, sampling_half_window_size_seconds=2.0,
                  img_augment=True,
                  filelists_dir='filelists',
-                 use_syncnet_weights=True):
+                 use_syncnet_weights=True,
+                 trivial=False):
         self.all_videos = list(filter(
             lambda vidname: os.path.exists(join(vidname, "blur.npy")),
             get_image_list(data_root, split, limit=limit, filelists_dir=filelists_dir)))
         assert len(self.all_videos) > 0, "no video dirs found from: {} with filelists_dir: {}".format(
             data_root, filelists_dir,
         )
+        self.trivial = trivial
+        if trivial:
+            print("!!!!!!!! TRIVIAL MODE !!!!!!!!")
         self.synclosses = {}
         synclosses_path = os.path.join(data_root, "synclosses.npy")
         if os.path.exists(synclosses_path) and use_syncnet_weights:
@@ -213,7 +217,7 @@ class Dataset(object):
                     chunksize=128):
                 self.img_names[vidname] = imgs
             for vidname in p.imap_unordered(
-                    audio.load_and_dump_mel, tqdm(self.all_videos, desc="load mels"), chunksize=128):
+                    audio.load_and_dump_mel, tqdm(self.all_videos, desc="load mels"), chunksize=128):                    
                 self.orig_mels[vidname] = None
         self.landmarks = LandMarks()
         if self.use_landmarks:
@@ -408,8 +412,9 @@ class Wav2LipDataset(Dataset):
 
             window_fnames, window_base_fnames = self.get_window(
                 img_name, vidname)
-            wrong_window_fnames = self.random_sample_window(vidname)
-            if window_fnames is None or wrong_window_fnames is None:
+
+            random_window_fnames = self.random_sample_window(vidname)
+            if window_fnames is None or random_window_fnames is None:
                 idx += 1
                 continue
 
@@ -418,8 +423,8 @@ class Wav2LipDataset(Dataset):
                 idx += 1
                 continue
 
-            wrong_window = self.read_window(wrong_window_fnames)
-            if wrong_window is None:
+            random_window = self.read_window(random_window_fnames)
+            if random_window is None:
                 idx += 1
                 continue
 
@@ -437,16 +442,19 @@ class Wav2LipDataset(Dataset):
 
             window = self.prepare_window(window)  # T x 3 x H x W
             y = torch.FloatTensor(window)
-            wrong_window = self.prepare_window(wrong_window)  # T x 3 x H x W
+            random_window = self.prepare_window(random_window)  # T x 3 x H x W
 
-            cat = np.concatenate([window, wrong_window, y], axis=0)
+            cat = np.concatenate([window, random_window, y], axis=0)
             cat = torch.FloatTensor(cat)
             if self.img_augment:
                 cat = self.augment_window(cat)
 
-            window = cat[:self.syncnet_T, :, :, :]
-            wrong_window = cat[self.syncnet_T:(self.syncnet_T * 2):, :, :]
-            y = cat[(self.syncnet_T * 2):, :, :, :]
+            window = cat[:self.syncnet_T]
+            random_window = cat[self.syncnet_T:(self.syncnet_T * 2)]
+            y = cat[(self.syncnet_T * 2):]
+
+            if self.trivial:
+                unmasked_window = window.clone()
 
             window, masks = self.mask_mouth(
                 window, vidname, window_base_fnames)
@@ -459,13 +467,15 @@ class Wav2LipDataset(Dataset):
 
             data_weight = self.get_data_weight(vidname)
 
-            # window: (T, 3, H, W)
+            x = torch.cat([window, random_window if not self.trivial else unmasked_window], dim=1)
+
+            # x: (T, 6, H, W)
             # wrong_window: (T, 3, H, W)
             # y: (T, 3, H, W)
             # indiv_mels: (T, 1, 80, 16)
             # mel: (1, 80, 16)
             # masks: (T, 1, H, W)
-            return window, wrong_window, indiv_mels, mel, y, blurs, data_weight, masks
+            return x, random_window, indiv_mels, mel, y, blurs, data_weight, masks
 
 
 class SyncnetDataset(Dataset):

@@ -360,13 +360,18 @@ class FaceConfigStream(object):
         coords = torch.IntTensor([y1, y2, x1, x2])
         landmarks = row['landmarks']
         white_mask = np.ones((hparams.img_size, hparams.img_size, 1), dtype='uint8')
-        mask = cal_mouth_contour_mask(white_mask, landmarks, hparams.img_size, hparams.img_size)
+        mask = cal_mouth_contour_mask(
+            white_mask, landmarks, hparams.img_size, hparams.img_size,
+            shrink_width_ratio=0.1,
+            expand_height_ratio=0.0,
+        )
         masked_face = face * mask
         masked_face = (torch.FloatTensor(masked_face) / 255.0).permute((2, 0, 1))
         mask = torch.FloatTensor(mask).permute((2, 0, 1))
         face = (torch.FloatTensor(face) / 255.0).permute((2, 0, 1))
+        x = torch.cat([masked_face, face], dim=0)
 
-        return masked_face, face, mel, img, coords, mask
+        return x, face, mel, img, coords, mask
 
 
 class FaceConfigReferenceStream(object):
