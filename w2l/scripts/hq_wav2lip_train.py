@@ -143,7 +143,7 @@ l2loss = nn.MSELoss(reduction='none')
 
 def train(device, model, disc, train_data_loader, test_data_loader, optimizer, disc_optimizer,
           syncnet, checkpoint_dir=None, checkpoint_interval=None, nepochs=None, K=1,
-          summary_writer=None):
+          summary_writer=None, rel_syncloss=True):
     global global_step, global_epoch
 
     original_disc_wt = hparams.disc_wt
@@ -231,8 +231,9 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
 
             sync_loss = get_sync_loss(syncnet, mel, half_g)
 
-            sync_loss = torch.maximum(
-                sync_loss * weights - sync_real_loss, torch.zeros((B,), device=device, dtype=torch.float32))
+            if rel_syncloss:
+                sync_loss = torch.maximum(
+                    sync_loss * weights - sync_real_loss, torch.zeros((B,), device=device, dtype=torch.float32))
 
             perceptual_loss = disc.perceptual_forward(half_g, half_x, half_ref)
             perceptual_loss = perceptual_loss.reshape(
@@ -314,7 +315,9 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
             if global_step % hparams.eval_interval == 0:
                 with torch.no_grad():
                     eval_model(
-                        test_data_loader, global_step, device, model, disc, syncnet, summary_writer=summary_writer)
+                        test_data_loader, global_step, device, model, disc, syncnet,
+                        summary_writer=summary_writer,
+                        rel_syncloss=rel_syncloss)
 
             next_step = step + 1
 
@@ -388,7 +391,7 @@ def train(device, model, disc, train_data_loader, test_data_loader, optimizer, d
         global_epoch += 1
 
 
-def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summary_writer=None):
+def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summary_writer=None, rel_syncloss=True):
     eval_steps = 300
     print('Evaluating for {} steps'.format(eval_steps))
     running_sync_loss, running_disc_real_loss, \
@@ -418,7 +421,8 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         blurs_gt = blurs_gt.to(device)
         masks = masks.to(device)
         bypass_mouth_masks = 1.0 - masks
-        half_bypass_mouth_masks = bypass_mouth_masks[:, :, :, hparams.half_img_size:]
+        half_bypass_mouth_masks = bypass_mouth_masks[:,
+                                                     :, :, hparams.half_img_size:]
 
         half_g = model(indiv_mels, x, ref)
         upper_gt = gt[:, :, :, :hparams.half_img_size]
@@ -441,8 +445,9 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
         sync_real_loss = get_sync_loss(syncnet, mel, half_gt, expect_true=True)
         sync_loss = get_sync_loss(syncnet, mel, half_g)
 
-        sync_loss = torch.maximum(sync_loss * weights - sync_real_loss,
-                                  torch.zeros((B,), dtype=torch.float32, device=device))
+        if rel_syncloss:
+            sync_loss = torch.maximum(sync_loss * weights - sync_real_loss,
+                                      torch.zeros((B,), dtype=torch.float32, device=device))
 
         blurs_loss = get_blurs_loss(half_g, blurs_gt, B)
 
@@ -452,7 +457,7 @@ def eval_model(test_data_loader, global_step, device, model, disc, syncnet, summ
 
         balance_ratio = 1.0 / (half_bypass_mouth_masks.reshape(
             (B, hparams.syncnet_T * hparams.half_img_size * hparams.img_size)
-            ).mean(1) + 1e-8)
+        ).mean(1) + 1e-8)
         l1 = l1loss(half_g * half_bypass_mouth_masks, half_gt * half_bypass_mouth_masks).reshape(
             (B, hparams.syncnet_T * 3 * hparams.half_img_size * hparams.img_size)).mean(1) * balance_ratio
 
@@ -606,6 +611,8 @@ def main(args=None):
                             help='Use Syncnet Weights for training', action='store_true')
         parser.add_argument('--trivial',
                             help='Trivial Training', action='store_true')
+        parser.add_argument('--no_rel_syncloss',
+                            help='Disable relative syncloss', action='store_true')
         parser.add_argument('--logdir',
                             help='Tensorboard logdir', default=None, type=str)
         args = parser.parse_args()
@@ -717,7 +724,8 @@ def main(args=None):
         checkpoint_dir=checkpoint_dir,
         checkpoint_interval=hparams.checkpoint_interval,
         nepochs=hparams.nepochs, K=args.K,
-        summary_writer=summary_writer)
+        summary_writer=summary_writer,
+        rel_syncloss=not args.no_rel_syncloss)
     return avg_fully_ssim_loss
 
 

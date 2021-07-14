@@ -16,7 +16,7 @@ from torch.utils import data as data_utils
 from w2l.utils.loss import cal_blur
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-lb = LaplacianBlending().to(device).eval()
+lb = LaplacianBlending(iters=2).to(device).eval()
 
 
 def _load(checkpoint_path):
