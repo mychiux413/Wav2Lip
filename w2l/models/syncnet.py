@@ -13,7 +13,34 @@ class SyncNet_color(nn.Module):
         super(SyncNet_color, self).__init__()
 
         self.face_encoder = nn.Sequential(
-            Conv2d(hp.syncnet_T * 3, 32, kernel_size=(7, 7), stride=1, padding=3),
+            Conv2d(3 * hp.syncnet_T, 32, kernel_size=(7, 7), stride=1, padding=3),
+
+            Conv2d(32, 64, kernel_size=5, stride=(1, 2), padding=1),
+            Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
+
+            Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+            Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
+
+            Conv2d(128, 256, kernel_size=3, stride=2, padding=1),
+            Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
+
+            Conv2d(256, 512, kernel_size=3, stride=2, padding=1),
+            Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
+            Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
+
+            nn.AvgPool2d((6, 6)),
+
+            # Conv2d(512, 512, kernel_size=3, stride=2, padding=1),
+            # Conv2d(512, 512, kernel_size=3, stride=1, padding=0),
+            # Conv2d(512, 512, kernel_size=1, stride=1, padding=0),
+        )
+
+        self.large_face_encoder = nn.Sequential(
+            Conv2d(3 * hp.syncnet_T, 32, kernel_size=(7, 7), stride=1, padding=3),
 
             Conv2d(32, 64, kernel_size=5, stride=(1, 2), padding=1),
             Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
@@ -33,7 +60,7 @@ class SyncNet_color(nn.Module):
             Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
 
             nn.AvgPool2d((12, 12)),
-            )
+        )
 
         self.audio_encoder = nn.Sequential(
             Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
@@ -49,6 +76,7 @@ class SyncNet_color(nn.Module):
             Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
 
             Conv2d(128, 256, kernel_size=3, stride=(3, 2), padding=1),
+            Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
             Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
 
             Conv2d(256, 512, kernel_size=3, stride=1, padding=0),
@@ -70,7 +98,7 @@ class SyncNet_color(nn.Module):
                 filename = os.path.join(dump_dir, f'sync_{hex}_{b}-{t}.jpg')
                 cv2.imwrite(filename, img)
 
-    def forward(self, audio_sequences, face_sequences):
+    def forward(self, audio_sequences, face_sequences, large_face_sequences=None):
         # face_sequences: (B, T * 3, H // 2, W)
         # audio_sequences: (B, 1, 80, 16)
 
@@ -84,4 +112,10 @@ class SyncNet_color(nn.Module):
         audio_embedding = F.normalize(audio_embedding, p=2, dim=1)
         face_embedding = F.normalize(face_embedding, p=2, dim=1)
 
-        return audio_embedding, face_embedding
+        large_face_embedding = None
+        if large_face_sequences is not None:
+            large_face_embedding = self.large_face_encoder(large_face_sequences)
+            large_face_embedding = large_face_embedding.view(large_face_embedding.size(0), -1)
+            large_face_embedding = F.normalize(large_face_embedding, p=2, dim=1)
+
+        return audio_embedding, face_embedding, large_face_embedding

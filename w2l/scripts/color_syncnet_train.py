@@ -19,6 +19,7 @@ from torch.utils.tensorboard import SummaryWriter
 import random
 from time import time
 from datetime import datetime
+import torchvision
 
 global_step = 0
 global_epoch = 0
@@ -33,6 +34,52 @@ def cosine_loss(a, v, y):
     return loss
 
 
+downsample = torchvision.transforms.Resize((48, 96))
+
+
+def forward(model, x, mel, weights):
+    B = x.size(0)
+    mel = mel.to(device)
+    weights = weights.to(device)
+    x = x.to(device)
+    downsampled_x = x.reshape(
+        (B * hparams.syncnet_T * 2, 3, hparams.half_img_size, hparams.img_size))
+    downsampled_x = downsample(downsampled_x).reshape(
+        (B, hparams.syncnet_T * 2, 3, hparams.half_img_size // 2, hparams.half_img_size)
+    )
+
+    # x_true B x T x 3 x H x W
+    x_true = x[:, :hparams.syncnet_T, :]
+    downsampled_x_true = downsampled_x[:, :hparams.syncnet_T, :]
+
+    # x_false: B x T x 3 x H x W
+    x_false = x[:, hparams.syncnet_T:, :]
+    downsampled_x_false = downsampled_x[:, hparams.syncnet_T:, :]
+    x_true = x_true.reshape(
+        (B, hparams.syncnet_T * 3, hparams.half_img_size, hparams.img_size))
+    x_false = x_false.reshape(
+        (B, hparams.syncnet_T * 3, hparams.half_img_size, hparams.img_size))
+    downsampled_x_true = downsampled_x_true.reshape(
+        (B, hparams.syncnet_T * 3, hparams.half_img_size // 2, hparams.half_img_size)
+    )
+    downsampled_x_false = downsampled_x_false.reshape(
+        (B, hparams.syncnet_T * 3, hparams.half_img_size // 2, hparams.half_img_size)
+    )
+
+    y_true = torch.ones((B, 1), dtype=torch.float32, device=device)
+    y_false = torch.zeros((B, 1), dtype=torch.float32, device=device)
+
+    a, downsampled_face_emb, face_emb = model(mel, downsampled_x_true, x_true)
+    downsampled_loss_true = (cosine_loss(a, downsampled_face_emb, y_true) * weights).mean()
+    loss_true = (cosine_loss(a, face_emb, y_true) * weights).mean()
+
+    a, downsampled_face_emb, face_emb = model(mel, downsampled_x_false, x_false)
+    downsampled_loss_false = (cosine_loss(a, downsampled_face_emb, y_false) * weights).mean()
+    loss_false = (cosine_loss(a, face_emb, y_false) * weights).mean()
+
+    return downsampled_loss_true, loss_true, downsampled_loss_false, loss_false
+
+
 def train(device, model, train_data_loader, test_data_loader, optimizer,
           checkpoint_dir=None, checkpoint_interval=None, nepochs=None, K=1,
           summary_writer=None):
@@ -44,7 +91,6 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
         C = np.log(hparams.syncnet_lr /
                    hparams.syncnet_min_lr) / hparams.warm_up_epochs
 
-    half_img_size = hparams.img_size // 2
     while global_epoch < nepochs:
         if global_epoch < hparams.warm_up_epochs:
             lr = hparams.syncnet_min_lr * np.exp(C * global_epoch)
@@ -60,7 +106,8 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             param_group['lr'] = lr
 
         running_loss, running_fake_loss, running_real_loss = 0., 0., 0.
-        
+        running_downsampled_fake_loss, running_downsampled_real_loss = 0., 0.
+
         prog_bar = tqdm(enumerate(train_data_loader))
         for step, (x, mel, weights) in prog_bar:
             # x: B x 2T x 3 x H x W
@@ -68,31 +115,13 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             if B == 1:
                 continue
 
-            # x_true B x T x 3 x H x W
-            x_true = x[:, :hparams.syncnet_T, :]
+            downsampled_loss_true, loss_true, downsampled_loss_false, loss_false = forward(
+                model, x, mel, weights)
 
-            # x_false: B x T x 3 x H x W
-            x_false = x[:, hparams.syncnet_T:, :]
-            x_true = x_true.reshape(
-                (B, hparams.syncnet_T * 3, half_img_size, hparams.img_size))
-            x_false = x_false.reshape(
-                (B, hparams.syncnet_T * 3, half_img_size, hparams.img_size))
-
-            y_true = torch.ones((B, 1), dtype=torch.float32, device=device)
-            y_false = torch.zeros((B, 1), dtype=torch.float32, device=device)
-
-            x_true = x_true.to(device)
-            x_false = x_false.to(device)
-
-            mel = mel.to(device)
-            weights = weights.to(device)
-
-            a, v = model(mel, x_true)
-            loss_true = (cosine_loss(a, v, y_true) * weights).mean()
-            a, v = model(mel, x_false)
-            loss_false = (cosine_loss(a, v, y_false) * weights).mean()
-
-            loss = (loss_true * 0.55 + loss_false * 0.45) / K
+            loss = (
+                (loss_true + downsampled_loss_true) * 0.55 +
+                (loss_false + downsampled_loss_false) * 0.45
+            ) / K / 2.0
             loss.backward()
 
             if global_step % K == 0:
@@ -103,6 +132,8 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             running_loss += loss.detach()
             running_fake_loss += loss_false.detach()
             running_real_loss += loss_true.detach()
+            running_downsampled_fake_loss += downsampled_loss_false.detach()
+            running_downsampled_real_loss += downsampled_loss_true.detach()
 
             if global_step == 1 or global_step % checkpoint_interval == 0:
                 save_checkpoint(
@@ -121,7 +152,10 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
                 _loss = running_loss.item() * K / next_step
                 _real = running_real_loss.item() / next_step
                 _fake = running_fake_loss.item() / next_step
-                prog_bar.set_description('Fake: {}, Real: {}, Loss: {}'.format(_fake, _real, _loss))
+                _d_real = running_downsampled_real_loss.item() / next_step
+                _d_fake = running_downsampled_fake_loss.item() / next_step
+                prog_bar.set_description(
+                    f'Fake: {_fake:0.3f}, DFake: {_d_fake:0.3f}, Real: {_real:0.3f}, DReal: {_d_real:0.3f}, Loss: {_real:0.3f}')
                 if summary_writer is not None:
                     summary_writer.add_scalar(
                         'Train/Loss', _loss, global_step)
@@ -129,6 +163,10 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
                         'Train/Fake', _fake, global_step)
                     summary_writer.add_scalar(
                         'Train/Real', _real, global_step)
+                    summary_writer.add_scalar(
+                        'Train/DFake', _d_fake, global_step)
+                    summary_writer.add_scalar(
+                        'Train/DReal', _d_real, global_step)
 
         global_epoch += 1
 
@@ -138,40 +176,26 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir,
     eval_steps = 1400
     print('Evaluating for {} steps'.format(eval_steps))
     losses, real_losses, fake_losses = [], [], []
-    half_img_size = hparams.img_size // 2
+    downsampled_real_losses, downsampled_fake_losses = [], []
     while 1:
         for step, (x, mel, weights) in enumerate(test_data_loader):
             B = x.size(0)
             if B == 1:
                 continue
 
-            # x_true B x T x 3 x H x W
-            x = x.to(device)
-            x_true = x[:, :hparams.syncnet_T, :]
-            x_false = x[:, hparams.syncnet_T:, :]
-            x_true = x_true.reshape(
-                (B, hparams.syncnet_T * 3, half_img_size, hparams.img_size))
-            x_false = x_false.reshape(
-                (B, hparams.syncnet_T * 3, half_img_size, hparams.img_size))
-            y_true = torch.ones((B, 1), dtype=torch.float32, device=device)
-            y_false = torch.zeros((B, 1), dtype=torch.float32, device=device)
-
             model.eval()
-
-            # Transform data to CUDA device
-            mel = mel.to(device)
-            weights = weights.to(device)
-
-            a, v = model(mel, x_true)
-            loss_true = (cosine_loss(a, v, y_true) * weights).mean()
-            a, v = model(mel, x_false)
-            loss_false = (cosine_loss(a, v, y_false) * weights).mean()
+            downsampled_loss_true, loss_true, downsampled_loss_false, loss_false = forward(
+                model, x, mel, weights)
 
             _t = loss_true.detach()
             _f = loss_false.detach()
+            _dt = downsampled_loss_true.detach()
+            _df = downsampled_loss_false.detach()
             losses.append(_t * 0.55 + _f * 0.45)
             real_losses.append(_t)
             fake_losses.append(_f)
+            downsampled_real_losses.append(_dt)
+            downsampled_fake_losses.append(_df)
 
             if step > eval_steps:
                 break
@@ -179,10 +203,14 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir,
         _losses = [loss.item() for loss in losses]
         _real_losses = [loss.item() for loss in real_losses]
         _fake_losses = [loss.item() for loss in fake_losses]
+        _dreal_losses = [loss.item() for loss in downsampled_real_losses]
+        _dfake_losses = [loss.item() for loss in downsampled_fake_losses]
         _loss = np.mean(_losses)
         _real = np.mean(_real_losses)
         _fake = np.mean(_fake_losses)
-        print('Evaluation | Fake: {}, Real: {}, Loss: {}'.format(_fake, _real, _loss))
+        _dreal = np.mean(_dreal_losses)
+        _dfake = np.mean(_dfake_losses)
+        print(f'Evaluation | Fake: {_fake:0.3f}, DFake: {_dfake:0.3f}, Real: {_real:0.3f}, DReal: {_dreal:0.3f}, Loss: {_loss:0.3f}')
         if summary_writer is not None:
             summary_writer.add_scalar(
                 'Evaluation/Loss', _loss, global_step)
@@ -190,6 +218,10 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir,
                 'Evaluation/Real', _real, global_step)
             summary_writer.add_scalar(
                 'Evaluation/Fake', _fake, global_step)
+            summary_writer.add_scalar(
+                'Evaluation/DReal', _dreal, global_step)
+            summary_writer.add_scalar(
+                'Evaluation/DFake', _dfake, global_step)
 
         return
 
@@ -223,7 +255,7 @@ def load_checkpoint(path, model, optimizer, reset_optimizer=False):
 
     print("Load checkpoint from: {}".format(path))
     checkpoint = _load(path)
-    model.load_state_dict(checkpoint["state_dict"])
+    model.load_state_dict(checkpoint["state_dict"], strict=False)
     if not reset_optimizer:
         optimizer_state = checkpoint["optimizer"]
         if optimizer_state is not None:
@@ -239,6 +271,9 @@ def load_checkpoint(path, model, optimizer, reset_optimizer=False):
 
 
 def main(args=None):
+
+    hparams.set_hparam("img_size", 192)
+    hparams.set_hparam("half_img_size", 96)
 
     if args is None:
         parser = argparse.ArgumentParser(
